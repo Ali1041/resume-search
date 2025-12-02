@@ -38,15 +38,27 @@ function findSections(text: string): string[] {
  */
 function extractCompany(chunkText: string): string | null {
   // Common patterns: "Company Name" or "at Company Name"
+  // Also look for company names at the start of lines or after common prefixes
   const companyPatterns = [
-    /(?:at|@|for)\s+([A-Z][a-zA-Z\s&]+)/,
-    /^([A-Z][a-zA-Z\s&]+)\s*(?:Inc|LLC|Corp|Ltd|Company)?$/m,
+    /(?:at|@|for|with|company:|organization:)\s+([A-Z][a-zA-Z0-9\s&.,-]+?)(?:\s|$|,|\.|;)/i,
+    /^([A-Z][a-zA-Z0-9\s&.,-]{2,40})\s*(?:Inc|LLC|Corp|Ltd|Company|Technologies|Systems|Solutions|Group)?$/m,
+    /([A-Z][a-zA-Z0-9\s&.,-]{2,40})\s*(?:Inc|LLC|Corp|Ltd|Company|Technologies|Systems|Solutions|Group)\b/i,
+    // Look for company names in experience sections (usually first line)
+    /^([A-Z][a-zA-Z0-9\s&.,-]{2,40})(?:\s|$)/m,
   ]
 
   for (const pattern of companyPatterns) {
     const match = chunkText.match(pattern)
     if (match && match[1]) {
-      return match[1].trim()
+      const company = match[1].trim()
+      // Filter out common false positives
+      if (company.length > 2 && 
+          company.length < 50 && 
+          !company.toLowerCase().includes('university') &&
+          !company.toLowerCase().includes('college') &&
+          !company.toLowerCase().includes('school')) {
+        return company
+      }
     }
   }
 
@@ -58,18 +70,30 @@ function extractCompany(chunkText: string): string | null {
  */
 function extractDates(chunkText: string): { start_date: string | null; end_date: string | null } {
   // Common date patterns: "Jan 2020 - Dec 2022", "2020-2022", "Jan 2020 - Present"
+  // Also handle formats like "01/2020 - 12/2022", "January 2020 - December 2022"
   const datePatterns = [
-    /(\w+\s+\d{4})\s*[-–]\s*(\w+\s+\d{4}|Present|Current)/i,
+    // Full month names: "January 2020 - December 2022"
+    /(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\s*[-–]\s*((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}|Present|Current)/i,
+    // Abbreviated months: "Jan 2020 - Dec 2022"
+    /(\w{3,9}\s+\d{4})\s*[-–]\s*(\w{3,9}\s+\d{4}|Present|Current)/i,
+    // Year only: "2020 - 2022"
     /(\d{4})\s*[-–]\s*(\d{4}|Present|Current)/,
+    // "to" format: "Jan 2020 to Dec 2022"
     /(\w+\s+\d{4})\s+to\s+(\w+\s+\d{4}|Present|Current)/i,
+    // MM/YYYY format: "01/2020 - 12/2022"
+    /(\d{1,2}\/\d{4})\s*[-–]\s*(\d{1,2}\/\d{4}|Present|Current)/,
+    // Single date (start only): "Jan 2020 - Present"
+    /(\w+\s+\d{4})\s*[-–]\s*(Present|Current)/i,
   ]
 
   for (const pattern of datePatterns) {
     const match = chunkText.match(pattern)
-    if (match && match[1] && match[2]) {
+    if (match && match[1]) {
+      const startDate = match[1].trim()
+      const endDate = match[2] ? match[2].trim() : null
       return {
-        start_date: match[1].trim(),
-        end_date: match[2].trim() === 'Present' || match[2].trim() === 'Current' ? null : match[2].trim(),
+        start_date: startDate,
+        end_date: endDate && (endDate === 'Present' || endDate === 'Current') ? null : endDate,
       }
     }
   }
@@ -90,18 +114,76 @@ export function chunkResumeText(text: string): Chunk[] {
   const minChunkLength = 50 // Minimum characters per chunk
   const maxChunkLength = 500 // Maximum characters per chunk
 
-  // Section keywords to identify sections
+  // Section keywords to identify sections - comprehensive mapping
   const sectionKeywords: Record<string, string> = {
+    // Work Experience variations
     'experience': 'Experience',
     'work experience': 'Experience',
     'employment': 'Experience',
     'professional experience': 'Experience',
+    'work history': 'Experience',
+    'employment history': 'Experience',
+    'career history': 'Experience',
+    'professional history': 'Experience',
+    
+    // Education variations
     'education': 'Education',
+    'academic': 'Education',
+    'academic background': 'Education',
+    'educational background': 'Education',
+    'academic qualifications': 'Education',
+    'qualifications': 'Education',
+    
+    // Projects variations
+    'projects': 'Projects',
+    'project': 'Projects',
+    'personal projects': 'Projects',
+    'side projects': 'Projects',
+    'project experience': 'Projects',
+    'portfolio': 'Projects',
+    
+    // Volunteer Work variations
+    'volunteer': 'Volunteer',
+    'volunteer work': 'Volunteer',
+    'volunteering': 'Volunteer',
+    'volunteer experience': 'Volunteer',
+    'community service': 'Volunteer',
+    'volunteer activities': 'Volunteer',
+    
+    // Skills variations
     'skills': 'Skills',
     'technical skills': 'Skills',
-    'projects': 'Projects',
+    'core skills': 'Skills',
+    'competencies': 'Skills',
+    'technical competencies': 'Skills',
+    'proficiencies': 'Skills',
+    'expertise': 'Skills',
+    
+    // Profile/Summary variations
+    'summary': 'Summary',
+    'professional summary': 'Summary',
+    'summary of qualifications': 'Summary',
+    'objective': 'Summary',
+    'career objective': 'Summary',
+    'profile': 'Summary',
+    'professional profile': 'Summary',
+    'about': 'Summary',
+    'about me': 'Summary',
+    
+    // Contact Info (usually extracted separately, but can be in chunks)
+    'contact': 'Contact',
+    'contact information': 'Contact',
+    'contact details': 'Contact',
+    
+    // Other common sections
     'certifications': 'Certifications',
+    'certification': 'Certifications',
     'awards': 'Awards',
+    'honors': 'Awards',
+    'publications': 'Publications',
+    'languages': 'Languages',
+    'interests': 'Interests',
+    'hobbies': 'Interests',
   }
 
   function flushCurrentChunk() {
@@ -130,7 +212,18 @@ export function chunkResumeText(text: string): Chunk[] {
     // Check if this line is a section header
     let isSectionHeader = false
     for (const [keyword, sectionName] of Object.entries(sectionKeywords)) {
-      if (lowerLine === keyword || lowerLine.startsWith(keyword + ':') || lowerLine === keyword.toUpperCase()) {
+      // More flexible matching: exact match, starts with, contains as whole word, or all caps
+      const keywordLower = keyword.toLowerCase()
+      const isExactMatch = lowerLine === keywordLower || lowerLine === keywordLower.toUpperCase()
+      const startsWithKeyword = lowerLine.startsWith(keywordLower + ':') || 
+                                 lowerLine.startsWith(keywordLower + ' ') ||
+                                 lowerLine.startsWith(keywordLower.toUpperCase() + ':') ||
+                                 lowerLine.startsWith(keywordLower.toUpperCase() + ' ')
+      // Check if line contains the keyword as a whole word and is short (likely a header)
+      const containsAsWord = new RegExp(`\\b${keywordLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(lowerLine) && 
+                            (lowerLine.length < 50) // Only if it's a short line (likely a header)
+      
+      if (isExactMatch || startsWithKeyword || containsAsWord) {
         flushCurrentChunk()
         currentSection = sectionName
         isSectionHeader = true

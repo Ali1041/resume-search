@@ -37,6 +37,9 @@ export interface SearchResult {
   resume_id: string
   name: string | null
   title: string | null
+  location?: string | null
+  experience_years?: number | null
+  skills?: string[] | null
   score: number
   similarity: number
   evidence: Array<{

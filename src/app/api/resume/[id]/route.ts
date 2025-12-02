@@ -27,13 +27,13 @@ export async function GET(
       )
     }
 
-    // Get top evidence chunks (sorted by creation date, can be enhanced with relevance)
+    // Get all chunks organized by section (no limit to get all sections)
     const { data: chunks, error: chunksError } = await supabase
       .from('resume_chunks')
       .select('id, chunk_text, section, company, start_date, end_date, created_at')
       .eq('resume_id', id)
+      .order('section', { ascending: true })
       .order('created_at', { ascending: false })
-      .limit(20)
 
     if (chunksError) {
       console.error('Chunks fetch error:', chunksError)

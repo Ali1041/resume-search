@@ -32,20 +32,62 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(arrayBuffer)
 
     // Step 1: Parse the resume file
-    const parsed = await parseResumeFile(buffer, fileName)
+    let parsed
+    try {
+      parsed = await parseResumeFile(buffer, fileName)
+    } catch (parseError) {
+      console.error('Parse error:', parseError)
+      return NextResponse.json(
+        { error: `Failed to parse file: ${parseError instanceof Error ? parseError.message : 'Unknown error'}` },
+        { status: 400 }
+      )
+    }
     
     if (!parsed.text || parsed.text.trim().length === 0) {
       return NextResponse.json(
-        { error: 'Failed to extract text from file' },
+        { error: 'Failed to extract text from file. The file may be image-based or corrupted. Please ensure the PDF contains selectable text.' },
         { status: 400 }
       )
     }
 
+    // Log extracted text length for debugging
+    console.log(`Extracted text length: ${parsed.text.length} characters`)
+    console.log(`Text preview: ${parsed.text.substring(0, 200)}`)
+
     // Step 2: Extract structured fields
     const fields = extractFields(parsed.text)
 
-    // Step 3: Upload file to Supabase Storage
-    const filePath = `${Date.now()}_${fileName}`
+    // Step 3: Check if bucket exists, create if not
+    const { data: buckets } = await supabase.storage.listBuckets()
+    const bucketExists = buckets?.some(bucket => bucket.name === STORAGE_BUCKET)
+    
+    if (!bucketExists) {
+      // Try to create the bucket
+      const { error: createBucketError } = await supabase.storage.createBucket(STORAGE_BUCKET, {
+        public: true, // Make bucket public so files can be accessed
+        fileSizeLimit: 10485760, // 10MB limit
+        allowedMimeTypes: ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword'],
+      })
+      
+      if (createBucketError) {
+        console.error('Failed to create bucket:', createBucketError)
+        return NextResponse.json(
+          { 
+            error: `Storage bucket '${STORAGE_BUCKET}' does not exist and could not be created. Please create it in your Supabase Dashboard → Storage. Error: ${createBucketError.message}` 
+          },
+          { status: 500 }
+        )
+      }
+    }
+
+    // Step 4: Upload file to Supabase Storage
+    // Sanitize filename to remove special characters that aren't allowed in storage keys
+    const sanitizedFileName = fileName
+      .replace(/[^a-zA-Z0-9.-]/g, '_') // Replace special chars with underscore
+      .replace(/_+/g, '_') // Replace multiple underscores with single
+      .replace(/^_|_$/g, '') // Remove leading/trailing underscores
+    
+    const filePath = `${Date.now()}_${sanitizedFileName}`
     const { error: uploadError, data: uploadData } = await supabase.storage
       .from(STORAGE_BUCKET)
       .upload(filePath, buffer, {
@@ -55,8 +97,17 @@ export async function POST(request: NextRequest) {
 
     if (uploadError) {
       console.error('Storage upload error:', uploadError)
+      // Provide more specific error message
+      if (uploadError.message?.includes('Bucket not found')) {
+        return NextResponse.json(
+          { 
+            error: `Storage bucket '${STORAGE_BUCKET}' not found. Please create it in your Supabase Dashboard → Storage with public access.` 
+          },
+          { status: 500 }
+        )
+      }
       return NextResponse.json(
-        { error: 'Failed to upload file to storage' },
+        { error: `Failed to upload file to storage: ${uploadError.message}` },
         { status: 500 }
       )
     }
@@ -68,7 +119,7 @@ export async function POST(request: NextRequest) {
 
     const resumeUrl = urlData.publicUrl
 
-    // Step 4: Chunk the text
+    // Step 5: Chunk the text
     const chunks = chunkResumeText(parsed.text)
 
     if (chunks.length === 0) {
@@ -78,7 +129,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Step 5: Generate embeddings for chunks
+    // Step 6: Generate embeddings for chunks
     const embeddings = await generateChunkEmbeddings(chunks)
 
     if (embeddings.length !== chunks.length) {
@@ -88,7 +139,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Step 6: Insert resume record
+    // Step 7: Insert resume record
     const { data: resumeData, error: resumeError } = await supabase
       .from('resumes')
       .insert({
@@ -118,7 +169,7 @@ export async function POST(request: NextRequest) {
 
     const resumeId = resumeData.id
 
-    // Step 7: Insert chunks with embeddings using RPC function
+    // Step 8: Insert chunks with embeddings using RPC function
     // Insert chunks one by one using the database function for proper vector handling
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]

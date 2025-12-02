@@ -55,6 +55,12 @@ export default function UploadResume() {
       if (fileInput) {
         fileInput.value = ''
       }
+      
+      // Optionally redirect to resumes page after successful upload
+      // Uncomment the following lines if you want auto-redirect:
+      // setTimeout(() => {
+      //   window.location.href = `/resumes/${data.resume_id}`
+      // }, 2000)
     } catch (error) {
       setMessage({
         type: 'error',
