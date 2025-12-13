@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Navigation from '@/components/Navigation'
+import EditResumeForm from '@/components/EditResumeForm'
 
 interface ResumeDetails {
   resume: {
@@ -47,6 +48,8 @@ export default function ResumeDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showFullText, setShowFullText] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   useEffect(() => {
     const fetchResume = async () => {
@@ -108,6 +111,30 @@ export default function ResumeDetailPage() {
     }))
   }
 
+  const handleDelete = async () => {
+    if (!confirm('Are you sure you want to delete this resume? This action cannot be undone.')) {
+      return
+    }
+
+    setIsDeleting(true)
+    try {
+      const response = await fetch(`/api/resume/${id}`, {
+        method: 'DELETE',
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to delete resume')
+      }
+
+      // Redirect to resumes list
+      window.location.href = '/resumes'
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete resume')
+      setIsDeleting(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-zinc-50 font-sans dark:bg-black">
@@ -138,6 +165,27 @@ export default function ResumeDetailPage() {
               ← Back to Resumes
             </Link>
           </div>
+        </main>
+      </div>
+    )
+  }
+
+  // Show edit form if in edit mode
+  if (isEditing && resume) {
+    return (
+      <div className="min-h-screen bg-zinc-50 font-sans dark:bg-black">
+        <Navigation />
+        <main className="container mx-auto px-4 py-8 max-w-7xl">
+          <div className="mb-6">
+            <h1 className="text-3xl font-bold text-black dark:text-zinc-50 mb-2">Edit Resume</h1>
+            <p className="text-zinc-600 dark:text-zinc-400">Make changes to the resume information</p>
+          </div>
+          <EditResumeForm
+            resumeData={resume}
+            resumeId={id}
+            onCancel={() => setIsEditing(false)}
+            onSave={() => setIsEditing(false)}
+          />
         </main>
       </div>
     )
@@ -211,19 +259,42 @@ export default function ResumeDetailPage() {
                 </p>
               )}
             </div>
-            {r.resume_url && (
-              <a
-                href={r.resume_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 px-6 py-3 bg-white text-black rounded-xl hover:bg-zinc-100 transition-colors font-medium whitespace-nowrap"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                View PDF
-              </a>
-            )}
+            <div className="flex flex-col gap-3">
+              {r.resume_url && (
+                <a
+                  href={r.resume_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 px-6 py-3 bg-white text-black rounded-xl hover:bg-zinc-100 transition-colors font-medium whitespace-nowrap"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  View PDF
+                </a>
+              )}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-colors font-medium whitespace-nowrap"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  Edit
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className="flex items-center justify-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white rounded-xl transition-colors font-medium whitespace-nowrap"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
