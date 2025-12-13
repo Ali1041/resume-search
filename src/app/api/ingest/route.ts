@@ -53,6 +53,11 @@ export async function POST(request: NextRequest) {
         }
         rawText = extracted.raw_text
         
+        // Log structured sections
+        console.log(`  Experience entries: ${extracted.experience?.length || 0}`)
+        console.log(`  Project entries: ${extracted.projects?.length || 0}`)
+        console.log(`  Education entries: ${extracted.education?.length || 0}`)
+        
         if (!rawText || rawText.trim().length < 50) {
           return NextResponse.json(
             { error: 'Failed to extract meaningful text from PDF. The PDF may be image-based or corrupted.' },
@@ -67,6 +72,20 @@ export async function POST(request: NextRequest) {
         console.log(`  Title: ${fields.title || 'Not found'}`)
         console.log(`  Skills: ${fields.skills.length} found`)
         console.log(`  Text length: ${rawText.length} characters`)
+        
+        // Log structured sections if available
+        if (extracted.experience && extracted.experience.length > 0) {
+          console.log(`  Experience entries: ${extracted.experience.length}`)
+          extracted.experience.forEach((exp: any, idx: number) => {
+            console.log(`    ${idx + 1}. ${exp.company || 'Unknown'} - ${exp.title || 'No title'}`)
+          })
+        }
+        if (extracted.projects && extracted.projects.length > 0) {
+          console.log(`  Project entries: ${extracted.projects.length}`)
+        }
+        if (extracted.education && extracted.education.length > 0) {
+          console.log(`  Education entries: ${extracted.education.length}`)
+        }
       } catch (pythonError) {
         console.error('Python extraction failed:', pythonError)
         return NextResponse.json(

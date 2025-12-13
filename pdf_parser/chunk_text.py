@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """
-Enhanced text chunking for resumes with better section detection
+Enhanced text chunking for resumes with better section detection and multiple items per section
 """
 
 import sys
 import json
 import re
 from typing import List, Dict, Optional
-from datetime import datetime
 
 def extract_dates(text: str) -> Dict[str, Optional[str]]:
     """Extract date ranges from text"""
-    # Common date patterns
     patterns = [
         r'(\w+\s+\d{4})\s*[-–]\s*(\w+\s+\d{4}|Present|Current)',
         r'(\d{4})\s*[-–]\s*(\d{4}|Present|Current)',
@@ -32,20 +30,19 @@ def extract_dates(text: str) -> Dict[str, Optional[str]]:
 
 def extract_company(text: str) -> Optional[str]:
     """Extract company name from chunk"""
-    # Common patterns
     patterns = [
         r'(?:at|@|for|with)\s+([A-Z][a-zA-Z0-9\s&.,-]{2,40})',
         r'^([A-Z][a-zA-Z0-9\s&.,-]{2,40})\s*(?:Inc|LLC|Corp|Ltd|Company|Technologies|Systems|Solutions|Group)?$',
         r'([A-Z][a-zA-Z0-9\s&.,-]{2,40})\s*(?:Inc|LLC|Corp|Ltd|Company|Technologies|Systems|Solutions|Group)\b',
+        r'^([A-Z][a-zA-Z0-9\s&.,-]{2,40})(?:\s|$)/m',
     ]
     
     lines = text.split('\n')
-    for line in lines[:3]:  # Check first few lines
+    for line in lines[:3]:
         for pattern in patterns:
             match = re.search(pattern, line)
             if match:
                 company = match.group(1).strip()
-                # Filter out false positives
                 if (len(company) > 2 and len(company) < 50 and 
                     company.lower() not in ['university', 'college', 'school', 'the']):
                     return company
@@ -53,7 +50,7 @@ def extract_company(text: str) -> Optional[str]:
     return None
 
 def chunk_resume_text(text: str) -> List[Dict]:
-    """Chunk resume text into sections with metadata"""
+    """Chunk resume text into sections with metadata, handling multiple items per section"""
     chunks = []
     lines = text.split('\n')
     
@@ -101,15 +98,18 @@ def chunk_resume_text(text: str) -> List[Dict]:
                     "end_date": dates["end_date"]
                 })
     
-    for line in lines:
-        line_stripped = line.strip()
-        if not line_stripped:
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        if not line:
             if current_chunk and len('\n'.join(current_chunk)) > min_chunk_length:
                 flush_chunk()
                 current_chunk = []
+            i += 1
             continue
         
-        line_lower = line_stripped.lower()
+        line_lower = line.lower()
         
         # Check if this is a section header
         is_section_header = False
@@ -125,16 +125,47 @@ def chunk_resume_text(text: str) -> List[Dict]:
                 break
         
         if not is_section_header:
-            # Check if we should flush current chunk
+            # Check if this might be a new entry within a section
+            # Look for patterns that indicate a new item:
+            # - Line starting with capitalized text (likely company/school/project name)
+            # - Line with date range
+            # - Line after empty line that starts with capital letter
+            
+            is_new_entry = False
+            if current_section and current_chunk:
+                # Check if previous line was empty or short, and this line looks like a header
+                if i > 0:
+                    prev_line = lines[i-1].strip()
+                    if (not prev_line or len(prev_line) < 10):
+                        # Check if current line looks like a title/header
+                        if (len(line) > 3 and len(line) < 80 and 
+                            line[0].isupper() and
+                            not line.lower().startswith(('•', '-', '*', '1.', '2.', '3.'))):
+                            # Check if it has a date or looks like a company name
+                            has_date = bool(re.search(r'\d{4}', line))
+                            looks_like_header = (has_date or 
+                                               len(line.split()) <= 5 or
+                                               any(word in line.lower() for word in ['inc', 'llc', 'corp', 'ltd', 'university', 'college']))
+                            
+                            if looks_like_header:
+                                is_new_entry = True
+            
+            if is_new_entry:
+                flush_chunk()
+                current_chunk = []
+            
+            # Check if we should flush current chunk due to size
             current_text = '\n'.join(current_chunk)
-            is_bullet = re.match(r'^[•\-\*\+]\s', line_stripped) or re.match(r'^\d+\.\s', line_stripped)
+            is_bullet = re.match(r'^[•\-\*\+]\s', line) or re.match(r'^\d+\.\s', line)
             
             if ((is_bullet and len(current_text) > max_chunk_length / 2) or 
                 len(current_text) > max_chunk_length):
                 flush_chunk()
                 current_chunk = []
             
-            current_chunk.append(line_stripped)
+            current_chunk.append(line)
+        
+        i += 1
     
     # Flush remaining chunk
     flush_chunk()
@@ -154,7 +185,6 @@ def create_sliding_window_chunks(text: str, min_length: int, max_length: int) ->
     while start < len(text):
         end = start + max_length
         
-        # Try to end at sentence boundary
         if end < len(text):
             last_period = text.rfind('.', start, end)
             last_newline = text.rfind('\n', start, end)
@@ -180,17 +210,13 @@ def create_sliding_window_chunks(text: str, min_length: int, max_length: int) ->
     return chunks
 
 def main():
-    # Read text from stdin (piped input) or file path argument
     if len(sys.argv) >= 2:
-        # If file path provided, read from file
         try:
             with open(sys.argv[1], 'r', encoding='utf-8') as f:
                 text = f.read()
         except:
-            # If file read fails, treat as direct text (fallback)
             text = sys.argv[1]
     else:
-        # Read from stdin
         text = sys.stdin.read()
     
     if not text or len(text.strip()) < 10:
@@ -206,4 +232,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

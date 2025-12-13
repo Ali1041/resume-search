@@ -6,7 +6,31 @@ import { tmpdir } from 'os'
 
 const execAsync = promisify(exec)
 
-const PYTHON_SCRIPT_DIR = path.join(process.cwd(), 'pdf_parser')
+// Use absolute path to avoid symlink issues
+const PYTHON_SCRIPT_DIR = path.resolve(process.cwd(), 'pdf_parser')
+
+interface ExperienceItem {
+  company: string | null
+  title: string | null
+  start_date: string | null
+  end_date: string | null
+  description: string
+}
+
+interface ProjectItem {
+  name: string | null
+  start_date: string | null
+  end_date: string | null
+  description: string
+}
+
+interface EducationItem {
+  school: string | null
+  degree: string | null
+  start_date: string | null
+  end_date: string | null
+  description: string
+}
 
 interface ExtractedFields {
   name: string | null
@@ -16,6 +40,9 @@ interface ExtractedFields {
   location: string | null
   title: string | null
   skills: string[]
+  experience: ExperienceItem[]
+  projects: ProjectItem[]
+  education: EducationItem[]
   raw_text: string
 }
 
@@ -49,15 +76,16 @@ async function checkPython(): Promise<boolean> {
  * Uses virtual environment if available
  */
 async function getPythonCommand(): Promise<string> {
-  const venvPath = path.join(process.cwd(), 'pdf_parser', 'venv', 'bin', 'python3')
+  // Try venv Python first (absolute path)
+  const venvPath = path.resolve(PYTHON_SCRIPT_DIR, 'venv', 'bin', 'python3')
   
-  // Check if virtual environment exists and use it
   try {
     await fs.access(venvPath)
-    // Use absolute path to avoid symlink issues
+    console.log(`Using virtual environment Python: ${venvPath}`)
     return venvPath
   } catch {
     // Fallback to system Python
+    console.log('Virtual environment not found, using system Python')
     try {
       await execAsync('python3 --version')
       return 'python3'
@@ -95,9 +123,14 @@ export async function extractFieldsFromPDF(buffer: Buffer, filename: string): Pr
     // Write buffer to temp file
     await fs.writeFile(tempFilePath, buffer)
 
-    // Execute Python script
+    // Execute Python script with absolute paths
+    const absoluteScriptPath = path.resolve(scriptPath)
+    const absoluteTempPath = path.resolve(tempFilePath)
+    
+    console.log(`Executing: ${pythonCmd} "${absoluteScriptPath}" "${absoluteTempPath}"`)
+    
     const { stdout, stderr } = await execAsync(
-      `${pythonCmd} "${scriptPath}" "${tempFilePath}"`,
+      `"${pythonCmd}" "${absoluteScriptPath}" "${absoluteTempPath}"`,
       { maxBuffer: 10 * 1024 * 1024 } // 10MB buffer
     )
 
@@ -120,6 +153,9 @@ export async function extractFieldsFromPDF(buffer: Buffer, filename: string): Pr
       location: result.location || null,
       title: result.title || null,
       skills: result.skills || [],
+      experience: result.experience || [],
+      projects: result.projects || [],
+      education: result.education || [],
       raw_text: result.raw_text || '',
     }
   } finally {
@@ -152,9 +188,12 @@ export async function chunkTextWithPython(text: string): Promise<Chunk[]> {
       try {
         await fs.writeFile(tempTextFile, text, 'utf-8')
         
-        // Execute Python script with temp file path as argument
+        // Execute Python script with absolute paths
+        const absoluteScriptPath = path.resolve(scriptPath)
+        const absoluteTempPath = path.resolve(tempTextFile)
+        
         const { stdout, stderr } = await execAsync(
-          `${pythonCmd} "${scriptPath}" "${tempTextFile}"`,
+          `"${pythonCmd}" "${absoluteScriptPath}" "${absoluteTempPath}"`,
           { maxBuffer: 10 * 1024 * 1024 }
         )
 
