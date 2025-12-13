@@ -89,26 +89,62 @@ export default function ResumeDetailPage() {
     return organized
   }
 
-  // Group experience by company
-  const groupExperienceByCompany = (chunks: OrganizedChunks['Experience'] | undefined) => {
+  // Convert experience chunks to individual list items
+  const getExperienceList = (chunks: OrganizedChunks['Experience'] | undefined) => {
     if (!chunks) return []
     
-    const grouped: { [key: string]: typeof chunks } = {}
+    // Group consecutive chunks by company to form complete experience entries
+    const experiences: Array<{
+      company: string
+      title: string | null
+      start_date: string | null
+      end_date: string | null
+      description: string
+    }> = []
+    
+    let currentExp: typeof experiences[0] | null = null
+    
     chunks.forEach((chunk) => {
       const company = chunk.company || 'Unknown Company'
-      if (!grouped[company]) {
-        grouped[company] = []
+      
+      // If this chunk has a company and it's different from current, start a new experience
+      if (chunk.company && (currentExp === null || currentExp.company !== company)) {
+        // Save previous experience if exists
+        if (currentExp) {
+          experiences.push(currentExp)
+        }
+        
+        // Start new experience
+        const lines = chunk.chunk_text.split('\n').filter(l => l.trim())
+        currentExp = {
+          company,
+          title: lines[0] || null,
+          start_date: chunk.start_date,
+          end_date: chunk.end_date,
+          description: chunk.chunk_text,
+        }
+      } else if (currentExp) {
+        // Append to current experience
+        currentExp.description += '\n' + chunk.chunk_text
+      } else {
+        // No current experience, create one
+        const lines = chunk.chunk_text.split('\n').filter(l => l.trim())
+        currentExp = {
+          company: company,
+          title: lines[0] || null,
+          start_date: chunk.start_date,
+          end_date: chunk.end_date,
+          description: chunk.chunk_text,
+        }
       }
-      grouped[company].push(chunk)
     })
     
-    return Object.entries(grouped).map(([company, items]) => ({
-      company,
-      items,
-      dateRange: items[0]?.start_date && items[0]?.end_date
-        ? `${items[0].start_date} - ${items[0].end_date || 'Present'}`
-        : items[0]?.start_date || 'Date not specified'
-    }))
+    // Add last experience
+    if (currentExp) {
+      experiences.push(currentExp)
+    }
+    
+    return experiences
   }
 
   const handleDelete = async () => {
@@ -205,7 +241,7 @@ export default function ResumeDetailPage() {
   }
   
   const experienceChunks = getSectionChunks('Experience', ['Experience', 'Work Experience', 'Employment'])
-  const experienceGroups = groupExperienceByCompany(experienceChunks)
+  const experienceList = getExperienceList(experienceChunks)
   const projectsChunks = getSectionChunks('Projects', ['Projects', 'Project'])
   const volunteerChunks = getSectionChunks('Volunteer', ['Volunteer', 'Volunteer Work', 'Volunteering', 'Community Service'])
   const educationChunks = getSectionChunks('Education', ['Education', 'Academic'])
@@ -382,7 +418,7 @@ export default function ResumeDetailPage() {
         </SectionCard>
 
         {/* 3. WORK EXPERIENCE SECTION */}
-        {experienceGroups && experienceGroups.length > 0 && (
+        {experienceList && experienceList.length > 0 && (
           <SectionCard
             title="Work Experience"
             icon={
@@ -392,26 +428,31 @@ export default function ResumeDetailPage() {
             }
           >
             <div className="space-y-8">
-              {experienceGroups.map((group, idx) => (
+              {experienceList.map((exp, idx) => (
                 <div key={idx} className="relative pl-8 pb-8 last:pb-0">
                   {/* Timeline line */}
-                  <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-zinc-200 dark:bg-zinc-700"></div>
+                  {idx < experienceList.length - 1 && (
+                    <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-zinc-200 dark:bg-zinc-700"></div>
+                  )}
                   {/* Timeline dot */}
-                  <div className="absolute left-0 top-1 w-4 h-4 bg-black dark:bg-zinc-50 rounded-full -translate-x-1.5"></div>
+                  <div className="absolute left-0 top-1 w-4 h-4 bg-black dark:bg-zinc-50 rounded-full -translate-x-1.5 border-2 border-white dark:border-zinc-900"></div>
                   
                   <div className="ml-6">
                     <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4">
-                      <h3 className="text-xl font-bold text-black dark:text-zinc-50">{group.company}</h3>
-                      <span className="text-sm text-zinc-600 dark:text-zinc-400 mt-1 md:mt-0 font-medium">
-                        {group.dateRange}
-                      </span>
+                      <div>
+                        <h3 className="text-xl font-bold text-black dark:text-zinc-50 mb-1">{exp.company}</h3>
+                        {exp.title && (
+                          <p className="text-lg text-zinc-600 dark:text-zinc-400 font-medium">{exp.title}</p>
+                        )}
+                      </div>
+                      {(exp.start_date || exp.end_date) && (
+                        <span className="text-sm text-zinc-600 dark:text-zinc-400 mt-1 md:mt-0 font-medium">
+                          {exp.start_date || ''} {exp.end_date ? `- ${exp.end_date}` : exp.start_date ? '- Present' : ''}
+                        </span>
+                      )}
                     </div>
-                    <div className="space-y-3">
-                      {group.items.map((item, itemIdx) => (
-                        <div key={itemIdx} className="text-zinc-700 dark:text-zinc-300 leading-relaxed">
-                          {item.chunk_text}
-                        </div>
-                      ))}
+                    <div className="text-zinc-700 dark:text-zinc-300 leading-relaxed whitespace-pre-line">
+                      {exp.description}
                     </div>
                   </div>
                 </div>
