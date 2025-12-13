@@ -1,0 +1,6 @@
+pdfplumber==0.11.0
+pypdf2==3.0.1
+python-dateutil==2.9.0
+phonenumbers==8.13.36
+email-validator==2.1.1
+

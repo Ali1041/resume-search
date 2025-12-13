@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase/client'
-import { parseResumeFile } from '@/lib/services/parser'
+import { extractFieldsFromPDF, chunkTextWithPython } from '@/lib/services/python-pdf-service'
+import { parseDOCX } from '@/lib/services/parser'
 import { extractFields } from '@/lib/services/field-extractor'
 import { chunkResumeText } from '@/lib/services/chunker'
 import { generateChunkEmbeddings } from '@/lib/services/embedding'
@@ -59,22 +60,59 @@ export async function POST(
 
     // Get file extension from URL
     const fileName = filePath.split('/').pop() || 'resume.pdf'
+    const extension = fileName.toLowerCase().split('.').pop()
 
-    // Parse resume file
-    const parsed = await parseResumeFile(buffer, fileName)
+    // Extract fields and text using Python for PDFs, Node.js for DOCX
+    let fields: any
+    let rawText: string
+    let chunks: any[]
 
-    if (!parsed.text || parsed.text.trim().length === 0) {
+    if (extension === 'pdf') {
+      // PDF files - use Python
+      try {
+        console.log('Using Python for PDF refresh...')
+        const extracted = await extractFieldsFromPDF(buffer, fileName)
+        fields = {
+          name: extracted.name,
+          email: extracted.email,
+          phone: extracted.phone,
+          linkedin: extracted.linkedin,
+          location: extracted.location,
+          title: extracted.title,
+          skills: extracted.skills,
+          experience_years: null,
+        }
+        rawText = extracted.raw_text
+        chunks = await chunkTextWithPython(rawText)
+      } catch (pythonError) {
+        console.error('Python refresh failed:', pythonError)
+        return NextResponse.json(
+          { error: `PDF refresh failed: ${pythonError instanceof Error ? pythonError.message : 'Unknown error'}. Please ensure Python 3.7+ is installed.` },
+          { status: 400 }
+        )
+      }
+    } else {
+      // DOCX files - use Node.js
+      try {
+        const parsed = await parseDOCX(buffer)
+        rawText = parsed.text
+        fields = extractFields(rawText)
+        chunks = chunkResumeText(rawText)
+      } catch (parseError) {
+        console.error('DOCX refresh error:', parseError)
+        return NextResponse.json(
+          { error: `Failed to parse DOCX: ${parseError instanceof Error ? parseError.message : 'Unknown error'}` },
+          { status: 400 }
+        )
+      }
+    }
+
+    if (!rawText || rawText.trim().length === 0) {
       return NextResponse.json(
         { error: 'Failed to extract text from file' },
         { status: 400 }
       )
     }
-
-    // Extract fields
-    const fields = extractFields(parsed.text)
-
-    // Chunk text
-    const chunks = chunkResumeText(parsed.text)
 
     if (chunks.length === 0) {
       return NextResponse.json(
@@ -105,7 +143,7 @@ export async function POST(
         title: fields.title,
         skills: fields.skills.length > 0 ? fields.skills : null,
         experience_years: fields.experience_years,
-        resume_text: parsed.text,
+        resume_text: rawText,
       })
       .eq('id', resume_id)
 

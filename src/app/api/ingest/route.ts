@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase/client'
-import { parseResumeFile } from '@/lib/services/parser'
+import { extractFieldsFromPDF, chunkTextWithPython } from '@/lib/services/python-pdf-service'
+import { parseDOCX } from '@/lib/services/parser'
+import { generateChunkEmbeddings } from '@/lib/services/embedding'
 import { extractFields } from '@/lib/services/field-extractor'
 import { chunkResumeText } from '@/lib/services/chunker'
-import { generateChunkEmbeddings } from '@/lib/services/embedding'
 
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'resumes'
 
@@ -31,31 +32,64 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
 
-    // Step 1: Parse the resume file
-    let parsed
-    try {
-      parsed = await parseResumeFile(buffer, fileName)
-    } catch (parseError) {
-      console.error('Parse error:', parseError)
-      return NextResponse.json(
-        { error: `Failed to parse file: ${parseError instanceof Error ? parseError.message : 'Unknown error'}` },
-        { status: 400 }
-      )
-    }
+    // Step 1: Extract fields and text using Python for PDFs, Node.js for DOCX
+    let fields: any
+    let rawText: string
     
-    if (!parsed.text || parsed.text.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'Failed to extract text from file. The file may be image-based or corrupted. Please ensure the PDF contains selectable text.' },
-        { status: 400 }
-      )
+    if (extension === 'pdf') {
+      // PDF files - use Python only
+      console.log('Using Python for PDF extraction...')
+      try {
+        const extracted = await extractFieldsFromPDF(buffer, fileName)
+        fields = {
+          name: extracted.name,
+          email: extracted.email,
+          phone: extracted.phone,
+          linkedin: extracted.linkedin,
+          location: extracted.location,
+          title: extracted.title,
+          skills: extracted.skills,
+          experience_years: null,
+        }
+        rawText = extracted.raw_text
+        
+        if (!rawText || rawText.trim().length < 50) {
+          return NextResponse.json(
+            { error: 'Failed to extract meaningful text from PDF. The PDF may be image-based or corrupted.' },
+            { status: 400 }
+          )
+        }
+        
+        console.log(`✓ Python extraction successful`)
+        console.log(`  Name: ${fields.name || 'Not found'}`)
+        console.log(`  Email: ${fields.email || 'Not found'}`)
+        console.log(`  Phone: ${fields.phone || 'Not found'}`)
+        console.log(`  Title: ${fields.title || 'Not found'}`)
+        console.log(`  Skills: ${fields.skills.length} found`)
+        console.log(`  Text length: ${rawText.length} characters`)
+      } catch (pythonError) {
+        console.error('Python extraction failed:', pythonError)
+        return NextResponse.json(
+          { 
+            error: `PDF extraction failed: ${pythonError instanceof Error ? pythonError.message : 'Unknown error'}. Please ensure Python 3.7+ is installed and run: pip3 install -r pdf_parser/requirements.txt` 
+          },
+          { status: 400 }
+        )
+      }
+    } else {
+      // DOCX files - use Node.js parser (mammoth)
+      try {
+        const parsed = await parseDOCX(buffer)
+        rawText = parsed.text
+        fields = extractFields(rawText)
+      } catch (parseError) {
+        console.error('DOCX parse error:', parseError)
+        return NextResponse.json(
+          { error: `Failed to parse DOCX file: ${parseError instanceof Error ? parseError.message : 'Unknown error'}` },
+          { status: 400 }
+        )
+      }
     }
-
-    // Log extracted text length for debugging
-    console.log(`Extracted text length: ${parsed.text.length} characters`)
-    console.log(`Text preview: ${parsed.text.substring(0, 200)}`)
-
-    // Step 2: Extract structured fields
-    const fields = extractFields(parsed.text)
 
     // Step 3: Check if bucket exists, create if not
     const { data: buckets } = await supabase.storage.listBuckets()
@@ -119,8 +153,25 @@ export async function POST(request: NextRequest) {
 
     const resumeUrl = urlData.publicUrl
 
-    // Step 5: Chunk the text
-    const chunks = chunkResumeText(parsed.text)
+    // Step 5: Chunk the text using Python for PDFs, Node.js for DOCX
+    let chunks
+    if (extension === 'pdf') {
+      // PDF files - use Python chunking
+      console.log('Using Python for text chunking...')
+      try {
+        chunks = await chunkTextWithPython(rawText)
+        console.log(`✓ Python chunking successful: ${chunks.length} chunks created`)
+      } catch (pythonError) {
+        console.error('Python chunking failed:', pythonError)
+        return NextResponse.json(
+          { error: `Text chunking failed: ${pythonError instanceof Error ? pythonError.message : 'Unknown error'}` },
+          { status: 500 }
+        )
+      }
+    } else {
+      // DOCX files - use Node.js chunker
+      chunks = chunkResumeText(rawText)
+    }
 
     if (chunks.length === 0) {
       return NextResponse.json(
@@ -151,8 +202,8 @@ export async function POST(request: NextRequest) {
         title: fields.title,
         skills: fields.skills.length > 0 ? fields.skills : null,
         experience_years: fields.experience_years,
-        resume_url: resumeUrl,
-        resume_text: parsed.text,
+                resume_url: resumeUrl,
+                resume_text: rawText,
       })
       .select()
       .single()
