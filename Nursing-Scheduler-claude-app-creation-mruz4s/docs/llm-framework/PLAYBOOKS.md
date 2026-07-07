@@ -42,7 +42,15 @@
 
 ### 6. Fix known scoping gaps, do not replicate them
 
-- `GET /api/rates/[entityId]`, `GET/PATCH /api/employees/[id]`, `PATCH/DELETE /api/areas/[id]`, and `DELETE /api/requirements/[id]` currently lack entity scoping. When you touch these files, add the missing check. Do not add new routes with the same pattern.
+- `GET /api/rates/[entityId]`, `GET/PATCH /api/employees/[id]`, `PATCH/DELETE /api/areas/[id]`, and `DELETE /api/requirements/[id]` currently lack entity scoping (CRIT-1). When you touch these files, add the missing check.
+- `POST /api/upload` resolves entities from uploaded spreadsheets but does not verify the caller can access those entities (CRIT-3). When previewing or importing, call `canAccessEntity(session, entityId)` for every resolved entity.
+- Do not add new routes with the same patterns.
+
+### 7. Validate uploads before parsing
+
+- Enforce max file size (e.g., 5–10 MB), allowed content types, and row-count limits before reading a spreadsheet into memory.
+- Validate every entity referenced inside the file against the caller's accessible entity set before writing or previewing.
+- **Map to finding:** `docs/SCALABILITY_CRITIQUE.md` CRIT-3.
 
 ---
 

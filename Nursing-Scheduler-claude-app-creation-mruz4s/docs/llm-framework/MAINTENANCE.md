@@ -101,3 +101,4 @@ If an LLM (or a human) discovers that a guardrail in these docs is wrong, outdat
 ## Changelog
 
 - **2026-07-07** — Created `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md`, `PLAYBOOKS.md`, `MAINTENANCE.md`, and `docs/SCALABILITY_CRITIQUE.md` from the 2026-07-07 scalability critique and LLM framework plan.
+- **2026-07-07** — Added finding IDs and CRIT-3 (upload scoping/file limits) to `docs/SCALABILITY_CRITIQUE.md`; propagated CRIT-3 to `ARCHITECTURE.md` and `PLAYBOOKS.md` after security audit.

@@ -148,18 +148,22 @@ if (!canAccessEntity(session, existing.entityId)) {
 
 This list maps directly to `docs/SCALABILITY_CRITIQUE.md`. Do not treat these as acceptable patterns for new code.
 
-1. **Entity-scoping gaps in single-resource routes**
+1. **CRIT-1: Entity-scoping gaps in single-resource routes**
    - `PATCH/DELETE /api/areas/[id]`, `GET/PATCH /api/employees/[id]`, `GET /api/rates/[entityId]`, `DELETE /api/requirements/[id]`.
    - Fix by loading the record and calling `canAccessEntity(session, existing.entityId)` before mutation/return.
-2. **Unbounded list queries**
+2. **CRIT-3: Upload endpoint scoping and file limits**
+   - `POST /api/upload` resolves entities by `code` from uploaded spreadsheets but never verifies the caller can access those entities (`src/app/api/upload/route.ts:243–298`, `300–372`).
+   - No max file size, content-type validation, or row-count limit (`src/app/api/upload/route.ts:38–54`).
+   - Fix by validating every resolved `entityId` with `canAccessEntity` and adding upload size/row limits.
+3. **HIGH-1: Unbounded list queries**
    - All list endpoints lack `take`/`skip`. Add pagination before adding new list endpoints.
-3. **In-memory aggregation**
+4. **HIGH-4: In-memory aggregation**
    - Budget and coverage endpoints aggregate in JavaScript. New features should use DB aggregation or pre-computed snapshots.
-4. **Sequential bulk writes**
+5. **HIGH-3: Sequential bulk writes**
    - `copy-week` and `upload` use `create` loops. New bulk operations should use `createMany` inside a transaction.
-5. **Missing Prisma pool configuration**
+6. **MED-2: Missing Prisma pool configuration**
    - Tune pool size or introduce PgBouncer if scaling horizontally.
-6. **Middleware does not protect API routes or enforce RBAC/entity scoping**
+7. **MED-1: Middleware does not protect API routes or enforce RBAC/entity scoping**
    - Authorization must be explicit in every route handler.
 
 ---
