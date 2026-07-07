@@ -15,6 +15,7 @@ The following changes require updating one or more LLM docs before the PR is con
 | Authentication or session shape | `CLAUDE.md`, `AGENTS.md`, `PLAYBOOKS.md` | RBAC rules, role meanings, session field usage |
 | Entity hierarchy or `EntityType` | `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md` | Hierarchy rules, roll-up behavior, parent/standalone red lines |
 | Prisma migrations (forward-only or destructive) | `CLAUDE.md`, `AGENTS.md` | Migration rules, destructive-change policy |
+| Backend architecture change (new service, migration of routes) | `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md`, `PLAYBOOKS.md` | Boundary rules, route ownership, backend conventions |
 | Rate card, budget, or hours math | `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md` | Data model red lines, roll-up mechanics |
 | API contract changes (new routes, pagination, response shape) | `CLAUDE.md`, `ARCHITECTURE.md`, `PLAYBOOKS.md` | Route conventions, pagination envelope, error handling |
 | New security boundary or RBAC change | `PLAYBOOKS.md` | Security playbook, scoping patterns |
@@ -102,3 +103,4 @@ If an LLM (or a human) discovers that a guardrail in these docs is wrong, outdat
 
 - **2026-07-07** — Created `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md`, `PLAYBOOKS.md`, `MAINTENANCE.md`, and `docs/SCALABILITY_CRITIQUE.md` from the 2026-07-07 scalability critique and LLM framework plan.
 - **2026-07-07** — Added finding IDs and CRIT-3 (upload scoping/file limits) to `docs/SCALABILITY_CRITIQUE.md`; propagated CRIT-3 to `ARCHITECTURE.md` and `PLAYBOOKS.md` after security audit.
+- **2026-07-07** — Added section 8 to `docs/SCALABILITY_CRITIQUE.md` recommending a dedicated backend service; updated `ARCHITECTURE.md`, `PLAYBOOKS.md`, `CLAUDE.md`, `AGENTS.md`, and `MAINTENANCE.md` to reflect the backend-for-frontend architecture.

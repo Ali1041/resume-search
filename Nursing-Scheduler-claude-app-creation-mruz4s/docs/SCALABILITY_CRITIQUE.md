@@ -169,6 +169,22 @@ The schema is well-modeled for the V1 domain but is missing several composite in
 
 ## 7. Phased roadmap
 
+> **Order matters.** Do the foundation re-architecture first. Scaling the current Next.js-all-in architecture is wasteful because every optimization must be done inside the same process that renders the UI. A backend service gives you a clean boundary to scale, test, and guardrail with LLM docs.
+
+### Foundation re-architecture (strategic priority)
+
+1. **Introduce a dedicated backend service.**
+   - Choose **NestJS + TypeScript** (same language, strong module structure) or **FastAPI + Pydantic** (strict validation, excellent for data-heavy domains).
+   - Next.js becomes a UI / API-gateway layer; it should not import `prisma` or query the database directly.
+2. **Migrate the heaviest endpoints first:**
+   - `/api/budget` (CRIT-2)
+   - `/api/dashboard/coverage` (MED-4)
+   - `/api/shifts/copy-week` (HIGH-3)
+   - `/api/upload` (CRIT-3)
+3. **Migrate remaining CRUD routes** one resource at a time.
+4. **Remove Prisma from Next.js** once all routes are migrated.
+5. **Update LLM framework docs** (`CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md`, `PLAYBOOKS.md`) to enforce the new boundary.
+
 ### Quick wins (1–2 days, low risk)
 
 1. **Add missing indexes on `Shift`:**
@@ -209,6 +225,82 @@ The schema is well-modeled for the V1 domain but is missing several composite in
    - Move from App Service B2 to a scale-out plan with auto-scaling rules based on CPU/response time; consider containerizing with health probes.
 6. **Sharded entity roll-ups:**
    - If parent entities grow past 100 children, store denormalized roll-up totals updated asynchronously rather than recomputing on every request.
+
+---
+
+## 8. Application architecture recommendation — Next.js vs. dedicated backend
+
+### Finding
+
+**Next.js is a frontend framework, not a backend framework.** The current codebase places heavy domain logic, aggregation, bulk operations, and direct database access inside Next.js API routes.
+
+**Evidence:**
+- `src/app/api/budget/route.ts:25–48` and `src/app/api/budget/route.ts:104–122` run full query sets and in-memory aggregation for parent entities (CRIT-2).
+- `src/app/api/dashboard/coverage/route.ts:52–113` performs `O(days × areas × requirements × shifts)` comparisons in JavaScript (MED-4).
+- `src/app/api/shifts/copy-week/route.ts:38–53` and `src/app/api/upload/route.ts:143–173, 228–238, 292–296, 366–369` do sequential `create` calls (HIGH-3).
+- `src/app/api/upload/route.ts:243–298, 300–372` resolves entities by code from uploaded spreadsheets and writes directly to the database without a domain layer (CRIT-3).
+- Every API route under `src/app/api` imports `prisma` directly and queries the database; there is no service layer or backend boundary.
+
+### Impact
+
+At small scale this is convenient, but as volume grows the Next.js process becomes responsible for:
+- UI rendering
+- Lightweight CRUD
+- Heavy aggregation
+- Bulk writes
+- Coverage pre-computation
+- Connection pooling
+
+This coupling makes the system harder to reason about, harder to test, harder to scale, and easier for AI-generated code to violate boundaries. The existing findings are symptoms of this architectural mismatch.
+
+### Recommendation
+
+**Introduce a dedicated backend service.** Next.js should own UI rendering and thin API-gateway orchestration; the backend should own all domain logic, database access, aggregation, and bulk operations.
+
+### Recommended target architecture
+
+```
+Next.js (frontend + BFF)
+    │
+    └── Backend service (NestJS or FastAPI)
+            │
+            ├── PostgreSQL (primary)
+            ├── Read replica / cache for dashboards
+            └── Background worker queue
+```
+
+### Why now
+
+- **Hard boundary for AI-generated code:** Telling an LLM "business logic lives in the backend, Next.js only renders UI and calls APIs" creates a clear box that is easier to enforce in `CLAUDE.md` / `AGENTS.md` guardrails.
+- **Independent scaling:** Dashboard/coverage/backend workloads can be scaled separately.
+- **Better testing:** Domain logic can be unit-tested in isolation from React components and route handlers.
+- **Cheaper than refactoring later:** The current V1 has ~20 API routes. Migrating them incrementally is far cheaper than rewriting a 200-route vibecoded monolith.
+
+### Backend framework options
+
+| Option | Best for | Trade-off |
+|---|---|---|
+| **NestJS + TypeScript** | Same language as Next.js; strong module/service structure; easy for a vibecoded TS codebase to grow into. | Heavier framework; can be over-engineered if not disciplined. |
+| **FastAPI + Pydantic** | Strict validation, excellent data/schedule math libraries, very clear request/response contracts. | Different language from frontend; more context switching. |
+
+**Recommendation:** NestJS if you want to keep one language. FastAPI if you want the strongest validation and domain-model discipline.
+
+### Migration strategy
+
+Do not rewrite everything at once. Migrate in this order:
+
+1. **Set up the backend skeleton** and define the API contract shape.
+2. **Migrate the heaviest endpoints first:** `/api/budget`, `/api/dashboard/coverage`, `/api/shifts/copy-week`, `/api/upload`.
+3. **Migrate remaining CRUD routes** one resource at a time.
+4. **Remove Prisma imports from Next.js** once all routes are migrated.
+5. **Update LLM framework docs** to enforce the new boundary.
+
+### LLM governance impact
+
+This decision changes the foundational stack assumption. The following docs must be updated:
+- `CLAUDE.md` / `AGENTS.md`: add "Next.js does not touch the database" as a non-negotiable.
+- `ARCHITECTURE.md`: document the target backend-for-frontend architecture.
+- `PLAYBOOKS.md`: add coding patterns for calling the backend from Next.js and keeping business logic out of API routes.
 
 ---
 

@@ -58,6 +58,40 @@
 
 ---
 
+## Target application architecture
+
+### Current state
+
+V1 colocates the UI, API routes, domain logic, and database access in a single Next.js application. This is reflected in `src/app/api/**/route.ts` files that import `prisma` directly and perform heavy aggregation, bulk writes, and coverage computation.
+
+### Target state
+
+```
+Next.js (frontend + thin BFF)
+    │
+    └── Backend service (NestJS or FastAPI)
+            │
+            ├── PostgreSQL (primary)
+            ├── Read replica / cache for dashboards
+            └── Background worker queue
+```
+
+### Responsibilities
+
+| Layer | Owns | Does not own |
+|---|---|---|
+| **Next.js** | Server-component rendering, client components, auth session hydration, calling backend APIs | Direct DB queries, business logic, heavy aggregation, bulk operations |
+| **Backend service** | Domain logic, validation, aggregation, bulk writes, migrations, all DB access | UI rendering, client state |
+| **Worker queue** | Bulk import, weekly copy, coverage pre-computation, roll-up snapshots | Synchronous request handling |
+
+### Transition notes
+
+- New routes must be added to the backend, not to `src/app/api`.
+- Existing `src/app/api` routes are technical debt and should be migrated incrementally (see Known technical debt).
+- API contracts should be defined in the backend and consumed by Next.js.
+
+---
+
 ## API route conventions and error handling
 
 ### Route structure
@@ -148,22 +182,25 @@ if (!canAccessEntity(session, existing.entityId)) {
 
 This list maps directly to `docs/SCALABILITY_CRITIQUE.md`. Do not treat these as acceptable patterns for new code.
 
-1. **CRIT-1: Entity-scoping gaps in single-resource routes**
+1. **ARCH-1: Next.js is the backend**
+   - V1 colocates UI, API routes, domain logic, and DB access in one Next.js app. This is the root cause that amplifies CRIT-2, HIGH-3, HIGH-4, MED-4, and CRIT-3.
+   - Fix by migrating to the backend-for-frontend architecture documented in `docs/SCALABILITY_CRITIQUE.md` section 8.
+2. **CRIT-1: Entity-scoping gaps in single-resource routes**
    - `PATCH/DELETE /api/areas/[id]`, `GET/PATCH /api/employees/[id]`, `GET /api/rates/[entityId]`, `DELETE /api/requirements/[id]`.
    - Fix by loading the record and calling `canAccessEntity(session, existing.entityId)` before mutation/return.
-2. **CRIT-3: Upload endpoint scoping and file limits**
+3. **CRIT-3: Upload endpoint scoping and file limits**
    - `POST /api/upload` resolves entities by `code` from uploaded spreadsheets but never verifies the caller can access those entities (`src/app/api/upload/route.ts:243–298`, `300–372`).
    - No max file size, content-type validation, or row-count limit (`src/app/api/upload/route.ts:38–54`).
    - Fix by validating every resolved `entityId` with `canAccessEntity` and adding upload size/row limits.
-3. **HIGH-1: Unbounded list queries**
+4. **HIGH-1: Unbounded list queries**
    - All list endpoints lack `take`/`skip`. Add pagination before adding new list endpoints.
-4. **HIGH-4: In-memory aggregation**
+5. **HIGH-4: In-memory aggregation**
    - Budget and coverage endpoints aggregate in JavaScript. New features should use DB aggregation or pre-computed snapshots.
-5. **HIGH-3: Sequential bulk writes**
+6. **HIGH-3: Sequential bulk writes**
    - `copy-week` and `upload` use `create` loops. New bulk operations should use `createMany` inside a transaction.
-6. **MED-2: Missing Prisma pool configuration**
+7. **MED-2: Missing Prisma pool configuration**
    - Tune pool size or introduce PgBouncer if scaling horizontally.
-7. **MED-1: Middleware does not protect API routes or enforce RBAC/entity scoping**
+8. **MED-1: Middleware does not protect API routes or enforce RBAC/entity scoping**
    - Authorization must be explicit in every route handler.
 
 ---

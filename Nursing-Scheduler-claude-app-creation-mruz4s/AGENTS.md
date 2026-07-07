@@ -42,11 +42,17 @@ This file is a self-contained mirror of the core rules in `CLAUDE.md`. Tools tha
    - `entityId`, `areaId`, `employeeId`, and `userId` sent from the client must be validated against the user's accessible entity set before use.
    - Do not expose internal IDs (e.g., CUIDs) in URLs unless they are also scoped to the user's access.
 
+6. **Next.js does not touch the database.**
+   - Next.js is the UI layer and a thin API gateway. It calls backend APIs; it does not import `prisma` or query PostgreSQL directly.
+   - All domain logic, aggregation, bulk operations, and migrations live in the backend service.
+   - Do not create new `src/app/api/**/route.ts` files that query the database. If a route must exist for UI reasons, it should forward to the backend.
+
 ## Stack rules of thumb
 
-- Prefer server components for read-only data; use API routes for mutations, bulk operations, and client-side polling.
-- Prisma singleton is exported from `src/lib/prisma.ts`. Do not instantiate new `PrismaClient` instances.
-- Use `date-fns` for date math; use `src/lib/hours.ts` for raw/paid-hour calculations and the `4.33` weeks/month factor.
+- Prefer server components for read-only data; use backend APIs for mutations, bulk operations, and client-side polling.
+- Next.js does not import `prisma` or query the database directly. Route all data access through the backend service.
+- In the backend service, use a single PrismaClient instance. Do not instantiate new `PrismaClient` instances.
+- Use `date-fns` for date math; use the backend's hours helpers for raw/paid-hour calculations and the `4.33` weeks/month factor.
 - Tailwind + `class-variance-authority` + `clsx`/`tailwind-merge` for UI components. Keep components presentational; business logic belongs in `src/lib/` or API routes.
 - Use Zod object schemas, not `as` casts or `any`.
 
@@ -79,10 +85,10 @@ Escalate to a human or a dedicated planning session before making any of these c
 
 ## Security & RBAC quick reference
 
-- `requireAuth()` / `requireAdmin()` / `requireManagerOrAdmin()` are for server components and redirect on failure. Do not use them inside API routes.
-- In API routes, use `getServerSession(authOptions)` and return `401`/`403` JSON responses.
-- `assertEntityAccess` throws a generic `Error`; wrap it in API routes and translate to `403`.
-- `GET /api/rates/[entityId]`, `GET/PATCH /api/employees/[id]`, `PATCH/DELETE /api/areas/[id]`, and `DELETE /api/requirements/[id]` currently have entity-scoping gaps. Do not replicate those patterns; fix them when touching those files.
+- `requireAuth()` / `requireAdmin()` / `requireManagerOrAdmin()` are for Next.js server components and redirect on failure. Do not use them in backend API handlers.
+- In the backend service, validate the session/token and return `401`/`403` JSON responses.
+- `assertEntityAccess` throws a generic `Error`; backend handlers must translate it to `403`.
+- The legacy Next.js API routes (`GET /api/rates/[entityId]`, `GET/PATCH /api/employees/[id]`, `PATCH/DELETE /api/areas/[id]`, `DELETE /api/requirements/[id]`) currently have entity-scoping gaps. Do not replicate those patterns in the backend; fix them when migrating those routes.
 
 ## Maintenance process
 

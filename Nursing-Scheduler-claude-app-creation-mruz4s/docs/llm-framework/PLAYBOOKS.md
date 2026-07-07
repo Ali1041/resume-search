@@ -42,9 +42,9 @@
 
 ### 6. Fix known scoping gaps, do not replicate them
 
-- `GET /api/rates/[entityId]`, `GET/PATCH /api/employees/[id]`, `PATCH/DELETE /api/areas/[id]`, and `DELETE /api/requirements/[id]` currently lack entity scoping (CRIT-1). When you touch these files, add the missing check.
-- `POST /api/upload` resolves entities from uploaded spreadsheets but does not verify the caller can access those entities (CRIT-3). When previewing or importing, call `canAccessEntity(session, entityId)` for every resolved entity.
-- Do not add new routes with the same patterns.
+- The legacy Next.js routes `GET /api/rates/[entityId]`, `GET/PATCH /api/employees/[id]`, `PATCH/DELETE /api/areas/[id]`, and `DELETE /api/requirements/[id]` currently lack entity scoping (CRIT-1). Migrate them to the backend and add the check there.
+- `POST /api/upload` resolves entities from uploaded spreadsheets but does not verify the caller can access those entities (CRIT-3). When migrating upload to the backend, validate every resolved `entityId` with `canAccessEntity(session, entityId)`.
+- Do not add new Next.js routes that query the database. New routes must be added to the backend service.
 
 ### 7. Validate uploads before parsing
 
@@ -120,40 +120,49 @@ These rules are derived from `docs/SCALABILITY_CRITIQUE.md` and apply to new cod
 
 ### Next.js App Router
 
-- Server components are the default for read-only pages. Fetch data directly or via lightweight helpers in `src/lib/`.
-- API routes are for mutations, bulk operations, and client-side polling. Keep them focused: one route per resource or dashboard concern.
+- Server components are the default for read-only pages. Fetch data from the backend service, not directly from the database.
+- Next.js `src/app/api` routes should be thin BFF/gateway routes that forward to the backend. Do not add new routes that query Prisma or contain business logic.
 - Use `loading.tsx` and `error.tsx` conventions where appropriate.
-- Client components must be marked with `'use client'`; keep their data-fetch logic minimal.
+- Client components must be marked with `'use client'`; keep their data-fetch logic minimal and call backend APIs through the Next.js BFF or directly if CORS/auth allows.
+
+### Backend service
+
+- All domain logic, DB access, aggregation, and bulk operations live in the backend service (NestJS or FastAPI).
+- Define API contracts in the backend. Next.js consumes those contracts.
+- Validate every request body, query param, and route param before touching the database.
+- Enforce RBAC and entity scoping in the backend; do not rely on the frontend or Next.js BFF for authorization.
+- Use service/repository layers. Do not put business logic directly in HTTP handlers.
 
 ### Prisma
 
-- Import the singleton: `import { prisma } from '@/lib/prisma'`.
-- Do not create `new PrismaClient()` anywhere.
+- Prisma is a **backend-only** dependency. Next.js must not import `prisma` or any Prisma-generated types.
+- In the backend service, use a single PrismaClient instance. Do not create `new PrismaClient()` anywhere.
 - Use explicit `select` or `include` to avoid over-fetching. Do not return full Prisma objects to the client if only a few fields are needed.
 - Use `where: { entityId: { in: accessibleIds } }` only when `accessibleIds` is non-null. For admins, omit the `entityId` filter entirely.
 - Prefer `findUnique` for single-record lookups; `findFirst` is acceptable when the query is not on a unique key.
 - Use `prisma.$transaction` for multi-step writes that must succeed or fail together.
 
-### Zod schemas
+### Zod schemas / Pydantic models
 
-- Define a Zod schema for every route body, query params, and form submission.
-- Coerce dates where needed: `z.string().date()` or `z.coerce.date()` depending on Zod version and input source.
+- Define a validation schema for every route body, query params, and form submission.
+- In NestJS, use DTOs + class-validator. In FastAPI, use Pydantic models.
+- Coerce dates where needed: `z.string().date()` or `z.coerce.date()` depending on language and input source.
 - Reject empty strings for required IDs: `z.string().min(1)`.
-- Return the first error message: `return NextResponse.json({ error: err.errors[0].message }, { status: 400 })`.
+- Return the first error message: `return NextResponse.json({ error: err.errors[0].message }, { status: 400 })` (Next.js) or the framework-equivalent `400` response from the backend.
 
 ### Form handling
 
 - Use `react-hook-form` with `@hookform/resolvers` for client forms.
-- The Zod schema should live near the API route so the server and client can share it (place in `src/lib/schemas/` or at the top of the route file).
-- On submit, call the API route; do not mutate Prisma from the client.
+- The validation schema should live near the backend route so the server and client can share it (place in a shared package or copy with a comment noting the source of truth).
+- On submit, call the backend API via the Next.js BFF; do not mutate Prisma from the client or from Next.js.
 
 ### Error handling
 
-- Always wrap route handlers in `try/catch` if they call Prisma or perform complex logic.
+- Always wrap backend handlers in `try/catch` if they call Prisma or perform complex logic.
 - Distinguish:
   - `401` — not authenticated
   - `403` — authenticated but not authorized for this entity/action
-  - `400` — bad input (Zod or business rule)
+  - `400` — bad input (Zod/Pydantic or business rule)
   - `404` — record not found
   - `500` — unexpected server error
 - Use `console.error(err)` for observability; return only a generic message to the client.
@@ -161,7 +170,7 @@ These rules are derived from `docs/SCALABILITY_CRITIQUE.md` and apply to new cod
 ### Drag-and-drop and client state
 
 - `@dnd-kit` is used for shift scheduling UI. Keep the drag state local to the component.
-- After a successful drop, call the API route to persist the change; do not optimistically update the server without a rollback plan.
+- After a successful drop, call the backend API (via the Next.js BFF) to persist the change; do not optimistically update the server without a rollback plan.
 - If the UI needs real-time shift data, re-fetch or use a server-side revalidation strategy; do not mirror the full shift table in React state.
 
 ---
