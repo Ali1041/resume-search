@@ -4,6 +4,8 @@
 **Target:** Medium scale (~50k shifts/month, ~500 employees, ~20 entities), extrapolated to Large (~200k shifts/month).  
 **Scope:** Documentation-only review of the Next.js 14 / Prisma / PostgreSQL / Azure stack.
 
+> **Superseded by:** The Fastify + React + Vite pnpm-workspace monorepo migration spec at `docs/specs/2026-07-09-fastify-monorepo-migration.md`. This critique remains the historical evidence base; the migration spec defines the implementation plan that addresses the findings below.
+
 ---
 
 ## 1. Workload model

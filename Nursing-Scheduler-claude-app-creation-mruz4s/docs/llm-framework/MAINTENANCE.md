@@ -1,6 +1,6 @@
 # Nursing Scheduler — LLM Framework Maintenance
 
-**Last reviewed:** 2026-07-07
+**Last reviewed:** 2026-07-09
 
 **Load this file when:** you need to know whether a code change requires updating the LLM docs, or how to recover from an incorrect guardrail.
 
@@ -12,13 +12,14 @@ The following changes require updating one or more LLM docs before the PR is con
 
 | Change type | Docs to update | What to update |
 |---|---|---|
-| Authentication or session shape | `CLAUDE.md`, `AGENTS.md`, `PLAYBOOKS.md` | RBAC rules, role meanings, session field usage |
+| Authentication or session shape | `CLAUDE.md`, `AGENTS.md`, `PLAYBOOKS.md` | RBAC rules, role meanings, session field usage, Fastify auth plugin helpers |
 | Entity hierarchy or `EntityType` | `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md` | Hierarchy rules, roll-up behavior, parent/standalone red lines |
-| Prisma migrations (forward-only or destructive) | `CLAUDE.md`, `AGENTS.md` | Migration rules, destructive-change policy |
-| Backend architecture change (new service, migration of routes) | `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md`, `PLAYBOOKS.md` | Boundary rules, route ownership, backend conventions |
+| Prisma migrations (forward-only or destructive) | `CLAUDE.md`, `AGENTS.md` | Migration rules, destructive-change policy, `packages/db` location |
+| Monorepo package layout or workspace boundaries | `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md`, `PLAYBOOKS.md` | Package ownership, import boundaries, frontend/backend separation |
+| Backend architecture change (new service, migration of routes) | `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md`, `PLAYBOOKS.md` | Boundary rules, route ownership, Fastify conventions |
 | Rate card, budget, or hours math | `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md` | Data model red lines, roll-up mechanics |
 | API contract changes (new routes, pagination, response shape) | `CLAUDE.md`, `ARCHITECTURE.md`, `PLAYBOOKS.md` | Route conventions, pagination envelope, error handling |
-| New security boundary or RBAC change | `PLAYBOOKS.md` | Security playbook, scoping patterns |
+| New security boundary or RBAC change | `PLAYBOOKS.md` | Security playbook, scoping patterns, Fastify auth decorators |
 | Performance fix (index, aggregation, bulk write) | `PLAYBOOKS.md`, `SCALABILITY_CRITIQUE.md` | Update the relevant finding or playbook rule |
 | Known technical debt is resolved | `ARCHITECTURE.md` | Remove or mark the debt item as resolved |
 
@@ -60,7 +61,7 @@ Every quarter, one owner should review the LLM docs and perform the following:
 Every LLM doc must include a `Last reviewed:` header near the top:
 
 ```markdown
-**Last reviewed:** 2026-07-07
+**Last reviewed:** 2026-07-09
 ```
 
 Update this date every time the file is meaningfully changed. Trivial typo fixes do not require a date change; adding rules, examples, or findings does.
@@ -104,3 +105,4 @@ If an LLM (or a human) discovers that a guardrail in these docs is wrong, outdat
 - **2026-07-07** — Created `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md`, `PLAYBOOKS.md`, `MAINTENANCE.md`, and `docs/SCALABILITY_CRITIQUE.md` from the 2026-07-07 scalability critique and LLM framework plan.
 - **2026-07-07** — Added finding IDs and CRIT-3 (upload scoping/file limits) to `docs/SCALABILITY_CRITIQUE.md`; propagated CRIT-3 to `ARCHITECTURE.md` and `PLAYBOOKS.md` after security audit.
 - **2026-07-07** — Added section 8 to `docs/SCALABILITY_CRITIQUE.md` recommending a dedicated backend service; updated `ARCHITECTURE.md`, `PLAYBOOKS.md`, `CLAUDE.md`, `AGENTS.md`, and `MAINTENANCE.md` to reflect the backend-for-frontend architecture.
+- **2026-07-09** — Updated `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md`, `PLAYBOOKS.md`, and `MAINTENANCE.md` to reflect the Fastify + React + Vite pnpm-workspace monorepo architecture described in `docs/specs/2026-07-09-fastify-monorepo-migration.md`.

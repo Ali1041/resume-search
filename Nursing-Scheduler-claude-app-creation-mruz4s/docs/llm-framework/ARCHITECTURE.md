@@ -1,6 +1,6 @@
 # Nursing Scheduler — LLM Architecture Deep-Dive
 
-**Last reviewed:** 2026-07-07
+**Last reviewed:** 2026-07-09
 
 **Load this file when:** you are changing the entity hierarchy, coverage model, API route structure, deployment topology, or secrets management. For day-to-day rules, see `CLAUDE.md` / `AGENTS.md`.
 
@@ -10,21 +10,21 @@
 
 ### Model
 
-- `Entity` has a self-referencing relation via `parentId` (`prisma/schema.prisma:79–80`).
-- `EntityType` is either `STANDALONE` or `PARENT` (`prisma/schema.prisma:37–40`).
+- `Entity` has a self-referencing relation via `parentId` (`packages/db/prisma/schema.prisma`).
+- `EntityType` is either `STANDALONE` or `PARENT` (`packages/db/prisma/schema.prisma`).
 - `PARENT` entities are containers. They do not own `Area`, `Shift`, `RateCard`, or `BudgetTarget` directly. Their values are derived from child entities (`STANDALONE` or other `PARENT` sub-entities).
 - `STANDALONE` entities are the schedulable units. They own areas, employees, shifts, staffing requirements, rate cards, and budget targets.
 
 ### Roll-up mechanics
 
-- `GET /api/budget` checks `entity.type` and, if `PARENT`, loads `subEntities` where `parentId === entityId` (`src/app/api/budget/route.ts:104–108`).
-- It then calls `computeEntityBudget` per sub-entity in `Promise.all` and sums the results (`src/app/api/budget/route.ts:120–136`).
-- Period multipliers (`weekly`, `pay-period`, `monthly`, `quarterly`, `yearly`) are applied after aggregation (`src/app/api/budget/route.ts:94–101, 138–141`).
-- **Current limitation:** This is full in-memory aggregation per child. With many sub-entities or many shifts, the request becomes a query-amplification and CPU hotspot. See `docs/SCALABILITY_CRITIQUE.md` finding CRIT-2.
+- `GET /api/budget` checks `entity.type` and, if `PARENT`, loads `subEntities` where `parentId === entityId`.
+- It then aggregates across sub-entities in SQL rather than computing per child in JavaScript.
+- Period multipliers (`weekly`, `pay-period`, `monthly`, `quarterly`, `yearly`) are applied after aggregation.
+- **Target implementation:** Raw SQL or Prisma `groupBy` + `_sum` over the requested entity range. Do not load all child shifts into memory. See `docs/SCALABILITY_CRITIQUE.md` finding CRIT-2 and the migration spec `BudgetService` example.
 
 ### Authorization across hierarchy
 
-- `getAccessibleEntityIds(session)` returns `null` for admins and `session.user.entityIds` for non-admins (`src/lib/permissions.ts:36–39`).
+- `request.getAccessibleEntityIds()` returns `null` for admins and the user's assigned entity IDs for non-admins (`apps/api/src/plugins/auth.ts`).
 - Non-admin users should only receive entities explicitly assigned to them. The parent/child relationship is not automatically expanded into the session; if a manager needs access to a parent, the parent must be in their assigned list.
 - **Guardrail:** Do not add "implicit parent access" logic without a design review. Any expansion of accessible IDs must happen server-side and be cached, not computed from the client.
 
@@ -35,20 +35,21 @@
 ### Core definition
 
 - Coverage is calculated as the time overlap between a scheduled shift and a staffing requirement.
-- The helper `coveredMinutes(shiftStart, shiftEnd, reqStart, reqEnd)` in `src/lib/hours.ts:78–95` returns the overlap in minutes, handling overnight shifts by adding 24h when `endTime <= startTime`.
-- `neededMinutes` for a slot is derived from `coveredMinutes(req.startTime, req.endTime, req.startTime, req.endTime)` or `rawHours * 60` (`src/app/api/dashboard/coverage/route.ts:63–64`).
-- `coveredHours` is the sum of overlap minutes across all shifts assigned to that area, capped at `neededMinutes` (`src/app/api/dashboard/coverage/route.ts:72–77`).
+- The helper `coveredMinutes(shiftStart, shiftEnd, reqStart, reqEnd)` in `apps/api/src/lib/hours.ts` returns the overlap in minutes, handling overnight shifts by adding 24h when `endTime <= startTime`.
+- `neededMinutes` for a slot is derived from the requirement's own span or `rawHours * 60`.
+- `coveredHours` is the sum of overlap minutes across all shifts assigned to that area, capped at `neededMinutes`.
 - `openHours = max(0, neededHours - coveredHours)`.
 
 ### Current implementation path
 
-- `GET /api/dashboard/coverage` loads `staffingRequirement`, `shift`, and `area` rows for the requested `entityId` and date range, then computes coverage in nested JavaScript loops (`src/app/api/dashboard/coverage/route.ts:33–113`).
-- No DB pre-computation or materialized view exists.
+- `GET /api/dashboard/coverage` loads `staffingRequirement`, `shift`, and `area` rows for the requested `entityId` and date range, then computes coverage in the Fastify service layer.
+- The synchronous endpoint caps the date range to 31 days.
+- Long-term scale is handled by a `CoverageSnapshot` table updated by BullMQ workers after shift mutations.
 
 ### Known complexity
 
-- Runtime is approximately `O(days × areas × requirements × shifts)`. A 28-day window with 20 areas and 500 shifts can perform tens of thousands of comparisons.
-- Overnight shifts are the only non-trivial time logic; the rest is straightforward interval overlap.
+- The legacy implementation ran in approximately `O(days × areas × requirements × shifts)` JavaScript loops. A 28-day window with 20 areas and 500 shifts could perform tens of thousands of comparisons.
+- The migration target moves the heavy computation to SQL or pre-computed snapshots.
 
 ### Future architecture options
 
@@ -62,33 +63,58 @@
 
 ### Current state
 
-V1 colocates the UI, API routes, domain logic, and database access in a single Next.js application. This is reflected in `src/app/api/**/route.ts` files that import `prisma` directly and perform heavy aggregation, bulk writes, and coverage computation.
+V1 is being migrated from a single Next.js application into a pnpm-workspace monorepo. The legacy Next.js app lives in `apps/legacy` during the strangler-fig migration. New backend code lives in `apps/api` and the new frontend lives in `apps/web`.
 
-### Target state
+### Monorepo layout
 
 ```
-Next.js (frontend + thin BFF)
-    │
-    └── Backend service (NestJS or FastAPI)
-            │
-            ├── PostgreSQL (primary)
-            ├── Read replica / cache for dashboards
-            └── Background worker queue
+Nursing-Scheduler-claude-app-creation-mruz4s/
+├── pnpm-workspace.yaml
+├── package.json              # Root scripts, workspace config, no app deps
+├── apps/
+│   ├── web/                  # React + Vite + TypeScript + Tailwind
+│   │   ├── src/
+│   │   │   ├── main.tsx
+│   │   │   ├── App.tsx
+│   │   │   ├── pages/        # React Router pages
+│   │   │   ├── components/
+│   │   │   └── lib/
+│   │   │       └── api.ts    # Axios client with withCredentials
+│   │   └── vite.config.ts
+│   ├── api/                  # Fastify + TypeScript + Prisma
+│   │   ├── src/
+│   │   │   ├── index.ts      # Server bootstrap
+│   │   │   ├── routes/       # HTTP route handlers
+│   │   │   ├── services/     # Domain/business logic
+│   │   │   ├── repositories/ # Prisma/data access
+│   │   │   ├── plugins/      # Auth, error handling, swagger
+│   │   │   └── lib/
+│   │   └── package.json
+│   └── legacy/               # Existing Next.js app during migration
+├── packages/
+│   ├── shared/               # Zod schemas, types, auth contracts
+│   └── db/                   # Prisma schema, client, migrations
+└── docs/
+    └── specs/
+        └── 2026-07-09-fastify-monorepo-migration.md
 ```
 
 ### Responsibilities
 
 | Layer | Owns | Does not own |
 |---|---|---|
-| **Next.js** | Server-component rendering, client components, auth session hydration, calling backend APIs | Direct DB queries, business logic, heavy aggregation, bulk operations |
-| **Backend service** | Domain logic, validation, aggregation, bulk writes, migrations, all DB access | UI rendering, client state |
-| **Worker queue** | Bulk import, weekly copy, coverage pre-computation, roll-up snapshots | Synchronous request handling |
+| **apps/web** | React components, routing, forms, client state, calling backend API | DB access, business logic, auth session validation, domain aggregation |
+| **apps/api** | HTTP routes, request/response validation, service orchestration, auth enforcement, all DB access | UI rendering, client state, browser APIs |
+| **packages/shared** | Zod schemas, TypeScript interfaces, auth contract types, API route types | Runtime logic, DB queries |
+| **packages/db** | Prisma schema, generated client, migration files, seed data | Business logic, HTTP handling |
+| **apps/legacy** (temporary) | Existing Next.js UI and API routes until fully migrated | New features, new DB access patterns |
 
 ### Transition notes
 
-- New routes must be added to the backend, not to `src/app/api`.
-- Existing `src/app/api` routes are technical debt and should be migrated incrementally (see Known technical debt).
-- API contracts should be defined in the backend and consumed by Next.js.
+- The legacy Next.js app is moved to `apps/legacy` and remains deployable until the React + Vite frontend and Fastify backend fully replace it.
+- New routes and features must be added to `apps/api`, not to `apps/legacy/src/app/api`.
+- Existing `apps/legacy/src/app/api` routes are technical debt and should be migrated incrementally or proxied to Fastify (see Known technical debt).
+- API contracts are defined in `packages/shared` and consumed by both `apps/web` and `apps/api`.
 
 ---
 
@@ -96,38 +122,52 @@ Next.js (frontend + thin BFF)
 
 ### Route structure
 
-- All API routes live under `src/app/api/**/route.ts` using the Next.js App Router convention.
-- Each route handler is named `GET`, `POST`, `PATCH`, `PUT`, or `DELETE` as appropriate.
-- No centralized authorization middleware exists; each route must call `getServerSession(authOptions)` and enforce its own checks (`src/lib/permissions.ts`).
+- Fastify routes live in `apps/api/src/routes/` and are registered in `apps/api/src/index.ts` under the `/api` prefix.
+- Each route file exports a function (e.g., `async function shiftRoutes(app: FastifyInstance)`) that registers verbs on the instance.
+- Routes parse HTTP requests, validate inputs, call services, and return responses. They do not contain business logic.
+- Auth is enforced by the auth plugin in `apps/api/src/plugins/auth.ts`. Every route must call `request.requireAuth()` (or `request.requireRole([...])`) and `request.canAccessEntity(entityId)` before reading or writing data.
+
+### Service/repository structure
+
+- **Routes** (`apps/api/src/routes/`): parse and validate HTTP requests, call services, return responses.
+- **Services** (`apps/api/src/services/`): contain business logic, orchestration, and transactions.
+- **Repositories** (`apps/api/src/repositories/`): contain Prisma queries and data access.
+
+### Validation
+
+- Validate request bodies with Zod schemas from `packages/shared`. Parse with `schema.parse(request.body)` and return `400` on failure.
+- Coerce query params (`page`, `pageSize`, date strings) before using them. Cap `pageSize` to a maximum (e.g., 1000).
 
 ### Error handling
 
-- Use `getServerSession` to verify the session, then return `401` for missing sessions and `403` for insufficient role or entity access.
-- Validate request bodies with Zod; return `400` with `err.errors[0].message` on failure.
-- Catch unexpected errors, log to `console.error`, and return `500` with `{ error: 'Server error' }`. Do not leak stack traces to the client.
-- Example pattern from `src/app/api/shifts/route.ts:82–143`.
+- `401` — unauthenticated (missing/invalid `request.requireAuth()`).
+- `403` — authenticated but not authorized for this entity/action (failed `request.canAccessEntity()` or `request.requireRole()`).
+- `400` — bad input (Zod or business rule violation).
+- `404` — record not found.
+- `500` — unexpected server error; log the full error but return a generic message.
 
 ### Entity scoping pattern
 
 ```ts
-const session = await getServerSession(authOptions)
-if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-if (!canAccessEntity(session, entityId)) {
-  return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-}
+const session = request.requireAuth()
+const query = parseShiftQuery(request.query)
+const result = await service.list(session, query)
+return reply.send(result)
 ```
 
 For single-resource mutations, always load the existing record first:
 
 ```ts
-const existing = await prisma.area.findUnique({ where: { id: params.id } })
-if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-if (!canAccessEntity(session, existing.entityId)) {
-  return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+const existing = await repo.findById(request.params.id)
+if (!existing) return reply.status(404).send({ error: 'Not found' })
+if (!request.canAccessEntity(existing.entityId)) {
+  return reply.status(403).send({ error: 'Forbidden' })
 }
+const updated = await service.update(existing.id, updateSchema.parse(request.body))
+return reply.send(updated)
 ```
 
-**Known debt:** Several routes do not follow this pattern yet. See `docs/SCALABILITY_CRITIQUE.md` ranked findings.
+**Known debt:** Several legacy Next.js routes do not follow this pattern yet. See `docs/SCALABILITY_CRITIQUE.md` ranked findings.
 
 ---
 
@@ -135,18 +175,18 @@ if (!canAccessEntity(session, existing.entityId)) {
 
 ### Current state
 
-- No route under `src/app/api` uses `take`/`skip` or cursor-based pagination for its primary list query. This is a documented scalability risk.
+- The legacy Next.js routes under `apps/legacy/src/app/api` do not use `take`/`skip` or cursor-based pagination. This is a documented scalability risk.
 
 ### Target convention
 
-- Every list endpoint must accept `page`/`limit` or `take`/`skip` query params.
+- Every list endpoint must accept `page`/`pageSize` or `take`/`skip` query params.
 - Default page size should be between 100 and 500 depending on use case (shifts: 500; users: 100).
 - Return a consistent envelope: `{ data, pagination: { page, pageSize, total, hasNext } }`.
-- Cap `limit` to a maximum (e.g., 1000) to prevent abuse.
+- Cap `pageSize` to a maximum (e.g., 1000) to prevent abuse.
 
 ### Dashboard endpoints
 
-- `GET /api/dashboard/coverage` and `GET /api/dashboard/agency` should cap the date range (e.g., max 90 days) and split large requests into multiple pageable calls if needed.
+- `GET /api/dashboard/coverage` and `GET /api/dashboard/agency` should cap the date range (e.g., max 31 days) and split large requests into multiple pageable calls if needed.
 - If pre-computed coverage snapshots are introduced, pagination becomes trivial on the snapshot table.
 
 ---
@@ -155,53 +195,58 @@ if (!canAccessEntity(session, existing.entityId)) {
 
 ### Compute
 
-- Azure App Service B2 plan, Next.js 14 standalone output.
-- The container runs the Next.js server and Prisma client. No separate worker tier exists yet.
-- Cold starts depend on the standalone build size and App Service warm-up. No health probes or readiness endpoints are visible in code.
+- **apps/api**: Azure Container Apps or App Service (Node.js 20, Fastify + TypeScript).
+- **apps/web**: Azure Static Web Apps or App Service serving the Vite build output.
+- **apps/legacy**: Azure App Service B2 plan running Next.js 14 standalone output during the transition.
 
 ### Database
 
 - Azure PostgreSQL Flexible Server Standard_B1ms: 1 vCore, 2 GB RAM.
-- Connection string is provided through `DATABASE_URL` env var (`prisma/schema.prisma:5–8`).
-- Prisma client singleton is created in `src/lib/prisma.ts:7–11` with no explicit pool tuning.
+- Connection string is provided through `DATABASE_URL` env var (`packages/db/prisma/schema.prisma`).
+- Prisma client singleton is created in `packages/db/src/client.ts` with no explicit pool tuning by default.
+
+### Redis / workers
+
+- Redis (Azure Cache for Redis or self-hosted) is used by BullMQ for background workers: bulk upload processing, coverage snapshot updates, budget snapshot updates.
+- Worker processes are registered in `apps/api/src/workers/` and started via `pnpm worker`.
 
 ### Secrets
 
-- `DATABASE_URL` and NextAuth secrets (`NEXTAUTH_SECRET`, `NEXTAUTH_URL`) are environment variables. They are not present in this repository.
+- `DATABASE_URL`, `JWT_SECRET`, `COOKIE_SECRET`, `API_URL`, `WEB_URL`, `REDIS_URL`, and `VITE_API_URL` are environment variables. They are not present in this repository.
 - Do not commit secrets, API keys, or production connection strings to git.
 - If adding third-party integrations (SMS, email, external payroll), follow the same env-var pattern and add validation in Zod schemas or runtime checks.
 
 ### Network security
 
-- Ensure the Azure App Service is configured to allow outbound traffic only to the PostgreSQL server, not open to the internet unless required by a feature.
+- Ensure Azure compute is configured to allow outbound traffic only to the PostgreSQL server and Redis, not open to the internet unless required by a feature.
 - Consider VNet integration or private endpoints for the database before scaling to sensitive health data or multi-tenant deployments.
 
 ---
 
 ## Known technical debt
 
-This list maps directly to `docs/SCALABILITY_CRITIQUE.md`. Do not treat these as acceptable patterns for new code.
+This list maps directly to `docs/SCALABILITY_CRITIQUE.md`. Do not treat these as acceptable patterns for new code. Items marked **[MIGRATING]** are being resolved by the move to `apps/api` and `apps/legacy`.
 
 1. **ARCH-1: Next.js is the backend**
-   - V1 colocates UI, API routes, domain logic, and DB access in one Next.js app. This is the root cause that amplifies CRIT-2, HIGH-3, HIGH-4, MED-4, and CRIT-3.
-   - Fix by migrating to the backend-for-frontend architecture documented in `docs/SCALABILITY_CRITIQUE.md` section 8.
+   - V1 colocated UI, API routes, domain logic, and DB access in one Next.js app. This is the root cause that amplified CRIT-2, HIGH-3, HIGH-4, MED-4, and CRIT-3.
+   - **[MIGRATING]** The legacy Next.js app is moved to `apps/legacy`. New routes, business logic, and DB access belong in `apps/api`. `apps/web` is a thin React + Vite frontend.
 2. **CRIT-1: Entity-scoping gaps in single-resource routes**
-   - `PATCH/DELETE /api/areas/[id]`, `GET/PATCH /api/employees/[id]`, `GET /api/rates/[entityId]`, `DELETE /api/requirements/[id]`.
-   - Fix by loading the record and calling `canAccessEntity(session, existing.entityId)` before mutation/return.
+   - `PATCH/DELETE /api/areas/[id]`, `GET/PATCH /api/employees/[id]`, `GET /api/rates/[entityId]`, `DELETE /api/requirements/[id]` in the legacy app.
+   - Fix by loading the record and calling `request.canAccessEntity(existing.entityId)` before mutation/return in Fastify.
 3. **CRIT-3: Upload endpoint scoping and file limits**
-   - `POST /api/upload` resolves entities by `code` from uploaded spreadsheets but never verifies the caller can access those entities (`src/app/api/upload/route.ts:243–298`, `300–372`).
-   - No max file size, content-type validation, or row-count limit (`src/app/api/upload/route.ts:38–54`).
-   - Fix by validating every resolved `entityId` with `canAccessEntity` and adding upload size/row limits.
+   - `POST /api/upload` in the legacy app resolves entities by `code` from uploaded spreadsheets but never verifies the caller can access those entities.
+   - No max file size, content-type validation, or row-count limit in the legacy route.
+   - Fix by validating every resolved `entityId` with `request.canAccessEntity()` and adding upload size/row limits in Fastify.
 4. **HIGH-1: Unbounded list queries**
-   - All list endpoints lack `take`/`skip`. Add pagination before adding new list endpoints.
+   - All legacy list endpoints lack `take`/`skip`. Add pagination before adding new list endpoints.
 5. **HIGH-4: In-memory aggregation**
-   - Budget and coverage endpoints aggregate in JavaScript. New features should use DB aggregation or pre-computed snapshots.
+   - Legacy budget and coverage endpoints aggregate in JavaScript. New features must use DB aggregation or pre-computed snapshots.
 6. **HIGH-3: Sequential bulk writes**
-   - `copy-week` and `upload` use `create` loops. New bulk operations should use `createMany` inside a transaction.
+   - Legacy `copy-week` and `upload` use `create` loops. New bulk operations must use `createMany` inside a transaction or a BullMQ worker.
 7. **MED-2: Missing Prisma pool configuration**
    - Tune pool size or introduce PgBouncer if scaling horizontally.
 8. **MED-1: Middleware does not protect API routes or enforce RBAC/entity scoping**
-   - Authorization must be explicit in every route handler.
+   - Authorization must be explicit in every Fastify route handler via `request.requireAuth()` and `request.canAccessEntity()`.
 
 ---
 
