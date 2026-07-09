@@ -3,8 +3,23 @@
 **Date:** 2026-07-09  
 **Project:** Nursing Scheduler V1  
 **Scope:** Documentation-only spec for migrating from a single Next.js app to a pnpm-workspace monorepo with a Fastify backend and React + Vite frontend.  
-**Status:** Draft — ready for dry-run validation  
+**Status:** Draft — reviewed for executability, not executed  
 **Owner:** AI-assisted engineering team
+
+---
+
+## 0. Important execution note
+
+This spec is a detailed, reviewed plan, **not a guarantee of a flawless first execution**. Real migrations like this always surface environment-specific issues (pnpm hoisting, TypeScript references, Prisma client generation, CORS/cookie quirks, UI component ports, etc.).
+
+When executing, treat this document as the authoritative starting point, but **expect to iterate**. For every decision not explicitly covered here, use the current LLM framework docs as the source of truth:
+
+- `CLAUDE.md` and `AGENTS.md` for non-negotiables and daily rules.
+- `docs/llm-framework/ARCHITECTURE.md` for structure and boundaries.
+- `docs/llm-framework/PLAYBOOKS.md` for auth, validation, error handling, performance, and security patterns.
+- `docs/llm-framework/MAINTENANCE.md` for when to update the docs.
+
+If you change the stack, the architecture, or any non-negotiable during execution, update the relevant LLM framework doc **before** continuing. Do not let the spec and the framework drift apart.
 
 ---
 
