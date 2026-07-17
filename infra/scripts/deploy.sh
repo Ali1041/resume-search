@@ -198,7 +198,7 @@ cmd_deploy() {
   work_dir=""
   plan_file=""
   tmp_vars_dir=""
-  trap '[[ -n "$work_dir" ]] && rm -rf "$work_dir"; [[ -n "$plan_file" ]] && rm -f "$plan_file"; [[ -n "$tmp_vars_dir" ]] && rm -rf "$tmp_vars_dir"; return 0' EXIT
+  trap '[[ -n "$work_dir" ]] && rm -rf "$work_dir"; [[ -n "$plan_file" ]] && rm -f "$plan_file"; [[ -n "$tmp_vars_dir" ]] && rm -rf "$tmp_vars_dir"; true' EXIT
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
