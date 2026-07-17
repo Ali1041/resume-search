@@ -1,0 +1,12 @@
+{
+  "$schema": "https://ghr.example.com/schemas/azure-deploy.schema.json",
+  "$comment": "Python app contract example. startup_command is REQUIRED for python (the classic deploy failure point). This example targets the ghr_timesheet_audit_app-style Dash app: gunicorn serving app:server. requirements.txt there has no database markers (no sqlalchemy/psycopg2/asyncpg), so kv_secrets is deliberately omitted — if you add a database dependency later, you must ask the operator to create the connection-string secret and declare it in kv_secrets or preflight will refuse to deploy.",
+  "version": "1",
+  "runtime": "python",
+  "runtime_version": "3.11",
+  "startup_command": "gunicorn --bind 0.0.0.0:8000 --workers 2 --timeout 120 app:server",
+  "health_check_path": "/health",
+  "app_settings": {
+    "PYTHONUNBUFFERED": "1"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://ghr.example.com/schemas/azure-deploy.schema.json",
+  "$comment": "Node app contract example. Copy to azure-deploy.json at your repo root and edit. version is always \"1\". runtime_version/startup_command/health_check_path/app_settings are optional. Secrets NEVER go in app_settings — use kv_secrets (a human creates the secret in the app's Key Vault first). This example intentionally declares NO kv_secrets: if your app uses a database (drizzle/prisma/knex/...), preflight will REFUSE to deploy until you ask the operator to create the connection-string secret and you declare it in kv_secrets.",
+  "version": "1",
+  "runtime": "node",
+  "runtime_version": "20-lts",
+  "build_command": "npm run build",
+  "health_check_path": "/health",
+  "app_settings": {
+    "NODE_ENV": "production"
+  }
+}
