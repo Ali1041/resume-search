@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ghr.example.com/schemas/azure-deploy.schema.json",
+  "title": "GHR azure-deploy.json contract",
+  "description": "Deployment contract between an app repo and the GHR deployment automation. Versioned via the `version` field; preflight validates against this schema before any custom logic.",
+  "type": "object",
+  "required": ["version", "runtime"],
+  "additionalProperties": false,
+  "patternProperties": {
+    "^\\$": {
+      "description": "Annotation fields like $schema and $comment are allowed anywhere at the top level."
+    }
+  },
+  "properties": {
+    "version": {
+      "description": "Contract version. Currently only \"1\" exists.",
+      "const": "1"
+    },
+    "runtime": {
+      "description": "Application runtime.",
+      "enum": ["node", "python"]
+    },
+    "runtime_version": {
+      "description": "Runtime version on Azure App Service Linux. node: e.g. \"20-lts\", \"18-lts\". python: e.g. \"3.11\", \"3.12\". Omit for the platform default.",
+      "type": "string",
+      "minLength": 1
+    },
+    "startup_command": {
+      "description": "Startup command (site_config.app_command_line). Optional for node, REQUIRED for python.",
+      "type": "string",
+      "minLength": 1
+    },
+    "build_command": {
+      "description": "Optional build command hint for CI (e.g. \"npm run build\").",
+      "type": "string",
+      "minLength": 1
+    },
+    "health_check_path": {
+      "description": "Path Azure pings for health checks and the deploy smoke test. Defaults to /health when omitted.",
+      "type": "string",
+      "pattern": "^/"
+    },
+    "app_settings": {
+      "description": "Non-secret environment variables. NEVER put secrets here.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      }
+    },
+    "kv_secrets": {
+      "description": "Map of APP_SETTING_NAME => Key Vault secret name. A human must pre-create each secret in the app's Key Vault (az keyvault secret set); Terraform only wires the Key Vault reference.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "runtime": { "const": "python" }
+        }
+      },
+      "then": {
+        "required": ["startup_command"]
+      }
+    }
+  ]
+}
