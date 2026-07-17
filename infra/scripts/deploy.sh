@@ -94,24 +94,26 @@ PY
   fi
 }
 
-# json_field <key> — reads a key from a JSON document on stdin.
+# json_field <key> — reads an output value from `terraform output -json` on stdin.
+# Output documents wrap every value as {"<key>": {"value": ..., ...}}.
 json_field() {
   local key="$1"
   if command -v jq >/dev/null 2>&1; then
-    jq -r --arg k "$key" '.[$k] // empty'
+    jq -r --arg k "$key" '.[$k].value // empty'
   else
-    python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1]) or "")' "$key"
+    python3 -c 'import json,sys; print((json.load(sys.stdin).get(sys.argv[1]) or {}).get("value") or "")' "$key"
   fi
 }
 
-# resolve_platform — populate RG_NAME, LOCATION, PLAN_ID from platform root
-# outputs, falling back to environment variables.
+# resolve_platform — populate RG_NAME, LOCATION, PLAN_ID and
+# PLATFORM_STAGING_MODE from platform root outputs, falling back to env vars.
 resolve_platform() {
   local outputs=""
   if outputs="$(terraform -chdir="$PLATFORM_DIR" output -json 2>/dev/null)"; then
     RG_NAME="$(printf '%s' "$outputs" | json_field resource_group_name)"
     LOCATION="$(printf '%s' "$outputs" | json_field location)"
     PLAN_ID="$(printf '%s' "$outputs" | json_field app_service_plan_id)"
+    PLATFORM_STAGING_MODE="$(printf '%s' "$outputs" | json_field staging_mode)"
   fi
   RG_NAME="${RG_NAME:-${PLATFORM_RESOURCE_GROUP_NAME:-}}"
   LOCATION="${LOCATION:-${PLATFORM_LOCATION:-canadacentral}}"
@@ -244,8 +246,13 @@ cmd_deploy() {
   health_path="${health_path:-/health}"
 
   # 3. Platform wiring.
-  local RG_NAME="" LOCATION="" PLAN_ID=""
+  local RG_NAME="" LOCATION="" PLAN_ID="" PLATFORM_STAGING_MODE=""
   resolve_platform
+  # Fail fast on staging-mode drift: the platform plan SKU was sized for one
+  # strategy, so a mismatched deploy would fail deep inside the Azure apply.
+  if [[ -n "$PLATFORM_STAGING_MODE" && "$PLATFORM_STAGING_MODE" != "$staging_mode" ]]; then
+    die "staging-mode mismatch: platform was applied with staging_mode=${PLATFORM_STAGING_MODE} but this deploy uses --staging-mode ${staging_mode}. Re-apply infra/platform with staging_mode=${staging_mode} (and a slot-capable SKU if switching to \"slot\") or re-run with --staging-mode ${PLATFORM_STAGING_MODE}."
+  fi
 
   local tf_vars=(
     -var "app_name=${app_name}"
@@ -278,8 +285,9 @@ cmd_deploy() {
     backend_args+=("${extra_backend_args[@]}")
   fi
 
-  # 4. Plan.
-  local plan_file="${APP_DIR}/tfplan-${app_name}"
+  # 4. Plan (plan file kept out of the repo tree).
+  local plan_file
+  plan_file="$(mktemp -t "tfplan-${app_name}")"
   terraform -chdir="$APP_DIR" init -input=false "${backend_args[@]}"
   terraform -chdir="$APP_DIR" plan -input=false -out="$plan_file" "${tf_vars[@]}"
 
@@ -295,6 +303,7 @@ cmd_deploy() {
 
   # 6. Apply.
   terraform -chdir="$APP_DIR" apply -input=false "$plan_file"
+  rm -f "$plan_file"
   local outputs production_url staging_url kv_name target_url
   outputs="$(terraform -chdir="$APP_DIR" output -json)"
   production_url="$(printf '%s' "$outputs" | json_field production_url)"

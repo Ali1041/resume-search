@@ -6,3 +6,5 @@ tfplan-*
 backend.hcl
 terraform.tfvars
 crash.log
+__pycache__/
+*.pyc

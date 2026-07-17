@@ -190,7 +190,7 @@ def run_checks(repo: Path, contract_path: Path, app_name: str, check_names: bool
         )
         return failures, warnings
     try:
-        contract: Dict[str, Any] = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract: Dict[str, Any] = json.loads(contract_path.read_text(encoding="utf-8", errors="replace"))
     except json.JSONDecodeError as exc:
         failures.append(f"azure-deploy.json is not valid JSON: {exc}")
         return failures, warnings

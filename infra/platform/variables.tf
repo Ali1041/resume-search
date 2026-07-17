@@ -35,7 +35,7 @@ variable "staging_mode" {
   # Choosing staging_mode = "slot" with one of those SKUs would fail at apply time
   # deep inside every per-app deployment, so reject it here at the platform level.
   validation {
-    condition     = var.staging_mode != "slot" || !contains(["F1", "D1", "B1", "B2", "B3"], var.app_service_sku)
+    condition     = var.staging_mode != "slot" || !contains(["F1", "D1", "B1", "B2", "B3"], upper(var.app_service_sku))
     error_message = "staging_mode \"slot\" requires a Standard or Premium SKU (S1+). ${var.app_service_sku} does not support deployment slots. Either raise app_service_sku to S1+ or set staging_mode = \"app\"."
   }
 }
