@@ -1,10 +1,10 @@
 variable "app_name" {
-  description = "Globally unique name for the web app (lowercase alnum + hyphens). Becomes https://<app_name>.azurewebsites.net."
+  description = "Globally unique name for the web app (lowercase alnum + hyphens). Becomes https://<app_name>.azurewebsites.net. Capped at 52 chars so the '-staging' suffix stays within the 60-char web app limit."
   type        = string
 
   validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$", var.app_name))
-    error_message = "app_name must be 3-60 chars of lowercase letters, digits, and hyphens, starting and ending with a letter or digit."
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{1,50}[a-z0-9]$", var.app_name))
+    error_message = "app_name must be 3-52 chars of lowercase letters, digits, and hyphens, starting and ending with a letter or digit (52 max so '<name>-staging' fits the 60-char Azure limit)."
   }
 }
 
