@@ -103,10 +103,16 @@ APP_ID=$(az ad app list --display-name ghr-github-deploy --query "[0].appId" -o 
 az ad sp create --id "$APP_ID"
 SP_OBJECT_ID=$(az ad sp show --id "$APP_ID" --query id -o tsv)
 
-# Least privilege: Contributor on the PLATFORM resource group only (not the sub).
+# Least privilege: NO resource-group or subscription-level role for the SP.
+# Each per-app deployment (infra/app) grants the SP "Website Contributor"
+# on THAT app's site only. An RG/subscription-level role (e.g. Contributor)
+# would let any poisoned app-repo workflow seize every app on the platform —
+# and, via Key Vault MANAGEMENT-plane writes (flipping the vault back to
+# access-policy mode), read every app's secrets. Do not do it.
+# Optional: read-only visibility for debugging.
 az role assignment create --assignee-object-id "$SP_OBJECT_ID" \
   --assignee-principal-type ServicePrincipal \
-  --role Contributor --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-ghr-platform"
+  --role Reader --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-ghr-platform"
 
 # Federated credential. CAUTION: GitHub issues IMMUTABLE `sub` claims (numeric
 # owner/repo IDs) for repos created after 2026-07-15 — a name-based wildcard
@@ -123,6 +129,16 @@ az ad app federated-credential create --id "$APP_ID" --parameters '{
 
 Also create the operator's own identity note: the human operator (Ali) deploys
 from his `az login` session; his AAD object ID goes to `OPERATOR_OBJECT_ID`.
+
+> **Blast radius (read this before onboarding apps):** v1 uses ONE shared deploy
+> SP for all apps, so it accumulates `Website Contributor` on every app. Any
+> workflow in ANY app repo can therefore deploy code to ANY app on the platform
+> (and code running in an app can read that app's own resolved Key Vault
+> references at runtime). v1 mitigations: protect `main` in every app repo,
+> restrict who can create repos and edit workflows, and use per-repo federated
+> credentials (exact subject) rather than an org-wide wildcard. v2 options:
+> per-app service principals, or GitHub Environments with required reviewers
+> gating the deploy job.
 
 ### 2.3 GitHub org secrets
 

@@ -103,7 +103,7 @@ resource "azurerm_role_assignment" "deploy_sp_website_contributor_staging" {
 # -----------------------------------------------------------------------------
 resource "azurerm_log_analytics_workspace" "this" {
   count               = var.enable_app_insights ? 1 : 0
-  name                = "log-${var.app_name}"
+  name                = substr("log-${var.app_name}", 0, 63)
   location            = var.location
   resource_group_name = var.resource_group_name
   sku                 = "PerGB2018"
@@ -133,7 +133,8 @@ resource "azurerm_linux_web_app" "this" {
   https_only = true
 
   # Disable basic auth for FTP/SCM endpoints (azpublisher-style credentials).
-  ftp_publish_basic_authentication_enabled = false
+  ftp_publish_basic_authentication_enabled       = false
+  webdeploy_publish_basic_authentication_enabled = false
 
   identity {
     type = "SystemAssigned"
@@ -176,7 +177,8 @@ resource "azurerm_linux_web_app_slot" "staging" {
 
   https_only = true
 
-  ftp_publish_basic_authentication_enabled = false
+  ftp_publish_basic_authentication_enabled       = false
+  webdeploy_publish_basic_authentication_enabled = false
 
   identity {
     type = "SystemAssigned"
@@ -213,7 +215,8 @@ resource "azurerm_linux_web_app" "staging" {
 
   https_only = true
 
-  ftp_publish_basic_authentication_enabled = false
+  ftp_publish_basic_authentication_enabled       = false
+  webdeploy_publish_basic_authentication_enabled = false
 
   identity {
     type = "SystemAssigned"

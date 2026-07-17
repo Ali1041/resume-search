@@ -1,10 +1,13 @@
 .terraform/
-.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 tfplan-*
+*.tfplan
+*.auto.tfvars
 backend.hcl
 terraform.tfvars
 crash.log
 __pycache__/
 *.pyc
+.env
+.env.*

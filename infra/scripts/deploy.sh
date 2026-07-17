@@ -72,24 +72,40 @@ PY
   fi
 }
 
-# contract_map_hcl <contract-file> <key> — prints an object field as an HCL map literal.
-contract_map_hcl() {
-  local file="$1" key="$2"
+# contract_write_tfvars_json <contract-file> <out-file> — writes contract-derived
+# terraform variables as a JSON tfvars file. JSON var files need no HCL rendering
+# in bash, which removes the -var injection class entirely (security audit M3).
+contract_write_tfvars_json() {
+  local file="$1" out="$2"
   if command -v jq >/dev/null 2>&1; then
-    jq -r --arg k "$key" '
-      .[$k] // {}
-      | to_entries
-      | map("\(.key)=\"\(.value | gsub("\\\\"; "\\\\") | gsub("\""; "\\\""))\"")
-      | join(", ")
-      | "{\(.)}"' "$file"
+    jq -n --slurpfile c "$file" '
+      ($c[0]) as $contract
+      | {
+          runtime: $contract.runtime,
+          health_check_path: ($contract.health_check_path // "/health"),
+          app_settings: ($contract.app_settings // {}),
+          kv_secret_references: ($contract.kv_secrets // {})
+        }
+      + (if $contract.runtime_version then {runtime_version: $contract.runtime_version} else {} end)
+      + (if $contract.startup_command then {startup_command: $contract.startup_command} else {} end)
+    ' > "$out"
   else
-    python3 - "$file" "$key" <<'PY'
+    python3 - "$file" "$out" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as fh:
-    data = json.load(fh).get(sys.argv[2]) or {}
-def esc(value):
-    return str(value).replace("\\", "\\\\").replace('"', '\\"')
-print("{" + ", ".join('{}="{}"'.format(k, esc(v)) for k, v in data.items()) + "}")
+    contract = json.load(fh)
+data = {
+    "runtime": contract.get("runtime"),
+    "health_check_path": contract.get("health_check_path") or "/health",
+    "app_settings": contract.get("app_settings") or {},
+    "kv_secret_references": contract.get("kv_secrets") or {},
+}
+if contract.get("runtime_version"):
+    data["runtime_version"] = contract["runtime_version"]
+if contract.get("startup_command"):
+    data["startup_command"] = contract["startup_command"]
+with open(sys.argv[2], "w", encoding="utf-8") as fh:
+    json.dump(data, fh)
 PY
   fi
 }
@@ -137,7 +153,7 @@ clone_source() {
 smoke_test() {
   local url="$1" attempt
   for attempt in 1 2 3 4 5 6; do
-    if curl -fsS -o /dev/null "$url"; then
+    if curl -fsS --max-time 20 --connect-timeout 10 -o /dev/null "$url"; then
       echo "smoke test OK: $url"
       return 0
     fi
@@ -177,6 +193,13 @@ cmd_deploy() {
   local source="" app_name="" env_target="prod" contract_arg="" assume_yes="false"
   local staging_mode="${STAGING_MODE:-slot}"
 
+  # Temp artifacts (clone dir, plan file, tfvars dir) are globals so the EXIT
+  # trap can clean them up on every exit path, including die (security audit L3).
+  work_dir=""
+  plan_file=""
+  tmp_vars_dir=""
+  trap '[[ -n "$work_dir" ]] && rm -rf "$work_dir"; [[ -n "$plan_file" ]] && rm -f "$plan_file"; [[ -n "$tmp_vars_dir" ]] && rm -rf "$tmp_vars_dir"; return 0' EXIT
+
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --app-name) app_name="$2"; shift 2 ;;
@@ -200,10 +223,14 @@ cmd_deploy() {
   [[ "$staging_mode" == "slot" || "$staging_mode" == "app" ]] || die "--staging-mode must be slot or app"
 
   # Resolve source to a local directory (clone if it is a URL).
-  local work_dir="" repo_dir=""
+  work_dir=""
+  local repo_dir=""
   if [[ -d "$source" ]]; then
     repo_dir="$(cd "$source" && pwd)"
   else
+    # Validate the scheme before handing the URL to gh/git (security audit L2).
+    [[ "$source" == https://* || "$source" == git@* ]] \
+      || die "unsupported repo URL scheme (expected https:// or git@...): $source"
     work_dir="$(mktemp -d -t ghr-deploy)"
     repo_dir="${work_dir}/repo"
     echo "cloning $source ..."
@@ -225,7 +252,11 @@ cmd_deploy() {
   fi
   [[ -f "$contract_file" ]] || die "contract file not found: $contract_file"
 
-  # 1. Preflight.
+  # 1. Preflight. Full schema validation is mandatory for deploys (the
+  # structural fallback is for standalone preflight runs only).
+  if ! python3 -c 'import jsonschema' >/dev/null 2>&1; then
+    die "python3 package 'jsonschema' is required for deployment (pip3 install --user jsonschema). Standalone preflight runs may skip it; deploys must validate the contract against the full schema."
+  fi
   local preflight_args=(--local-path "$repo_dir" --contract "$contract_file" --app-name "$app_name")
   if command -v az >/dev/null 2>&1; then
     preflight_args+=(--check-names)
@@ -234,16 +265,17 @@ cmd_deploy() {
     die "preflight failed; refusing to deploy"
   fi
 
-  # 2. Read contract fields.
-  local runtime runtime_version startup_command health_path app_settings_hcl kv_hcl
+  # 2. Read contract fields. Values passed to terraform go through a JSON
+  # tfvars file (never bash-rendered HCL); scalars below are for script logic.
+  local runtime health_path
   runtime="$(contract_get "$contract_file" runtime)"
-  runtime_version="$(contract_get "$contract_file" runtime_version)"
-  startup_command="$(contract_get "$contract_file" startup_command)"
   health_path="$(contract_get "$contract_file" health_check_path)"
-  app_settings_hcl="$(contract_map_hcl "$contract_file" app_settings)"
-  kv_hcl="$(contract_map_hcl "$contract_file" kv_secrets)"
   [[ -n "$runtime" ]] || die "contract is missing runtime"
   health_path="${health_path:-/health}"
+
+  tmp_vars_dir="$(mktemp -d -t ghr-deploy-vars)"
+  local tfvars_json="${tmp_vars_dir}/contract.tfvars.json"
+  contract_write_tfvars_json "$contract_file" "$tfvars_json"
 
   # 3. Platform wiring.
   local RG_NAME="" LOCATION="" PLAN_ID="" PLATFORM_STAGING_MODE=""
@@ -255,22 +287,13 @@ cmd_deploy() {
   fi
 
   local tf_vars=(
+    -var-file="$tfvars_json"
     -var "app_name=${app_name}"
     -var "resource_group_name=${RG_NAME}"
     -var "location=${LOCATION}"
     -var "app_service_plan_id=${PLAN_ID}"
-    -var "runtime=${runtime}"
     -var "staging_mode=${staging_mode}"
-    -var "health_check_path=${health_path}"
-    -var "app_settings=${app_settings_hcl}"
-    -var "kv_secret_references=${kv_hcl}"
   )
-  if [[ -n "$runtime_version" ]]; then
-    tf_vars+=(-var "runtime_version=${runtime_version}")
-  fi
-  if [[ -n "$startup_command" ]]; then
-    tf_vars+=(-var "startup_command=${startup_command}")
-  fi
   if [[ -n "${OPERATOR_OBJECT_ID:-}" ]]; then
     tf_vars+=(-var "operator_object_id=${OPERATOR_OBJECT_ID}")
   fi
@@ -286,9 +309,8 @@ cmd_deploy() {
   fi
 
   # 4. Plan (plan file kept out of the repo tree).
-  local plan_file
   plan_file="$(mktemp -t "tfplan-${app_name}")"
-  terraform -chdir="$APP_DIR" init -input=false "${backend_args[@]}"
+  terraform -chdir="$APP_DIR" init -input=false -reconfigure "${backend_args[@]}"
   terraform -chdir="$APP_DIR" plan -input=false -out="$plan_file" "${tf_vars[@]}"
 
   # 5. Human gate.
@@ -304,6 +326,7 @@ cmd_deploy() {
   # 6. Apply.
   terraform -chdir="$APP_DIR" apply -input=false "$plan_file"
   rm -f "$plan_file"
+  plan_file=""
   local outputs production_url staging_url kv_name target_url
   outputs="$(terraform -chdir="$APP_DIR" output -json)"
   production_url="$(printf '%s' "$outputs" | json_field production_url)"
@@ -332,10 +355,6 @@ cmd_deploy() {
   echo "  key vault:  $kv_name  (set secrets with: az keyvault secret set --vault-name $kv_name --name <secret> --value <value>)"
   if [[ -n "${SLACK_WEBHOOK_URL:-}" ]]; then
     notify_slack "GHR deploy complete: ${app_name} -> ${target_url}"
-  fi
-
-  if [[ -n "$work_dir" ]]; then
-    rm -rf "$work_dir"
   fi
 }
 
@@ -371,7 +390,7 @@ cmd_destroy() {
     backend_args+=("${extra_backend_args[@]}")
   fi
 
-  terraform -chdir="$target_dir" init -input=false "${backend_args[@]}"
+  terraform -chdir="$target_dir" init -input=false -reconfigure "${backend_args[@]}"
   # Variable values are irrelevant to destroy (it acts on state), but required
   # variables must still be given; runtime=node is a neutral placeholder.
   terraform -chdir="$target_dir" destroy \

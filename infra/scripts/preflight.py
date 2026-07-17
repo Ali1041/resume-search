@@ -105,6 +105,9 @@ def find_db_markers(repo: Path, py_deps: List[str]) -> List[str]:
     return markers
 
 
+SETTING_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 def structural_schema_checks(contract: Dict[str, Any], failures: List[str]) -> None:
     """Fallback checks when the jsonschema library is not installed."""
     if contract.get("version") != "1":
@@ -114,6 +117,16 @@ def structural_schema_checks(contract: Dict[str, Any], failures: List[str]) -> N
     for key in ("app_settings", "kv_secrets"):
         if key in contract and not isinstance(contract[key], dict):
             failures.append(f'contract "{key}" must be an object')
+            continue
+        for setting_key, setting_value in (contract.get(key) or {}).items():
+            # Keys/values are rendered into terraform variables downstream;
+            # enforce the same charset the JSON Schema would (security audit L1).
+            if not SETTING_KEY_PATTERN.match(str(setting_key)):
+                failures.append(
+                    f'contract "{key}" key {setting_key!r} is invalid: keys must match ^[A-Za-z_][A-Za-z0-9_]*$'
+                )
+            if not isinstance(setting_value, str):
+                failures.append(f'contract "{key}" value for {setting_key!r} must be a string')
     if contract.get("runtime") == "python" and not contract.get("startup_command"):
         failures.append('runtime "python" requires a non-empty "startup_command" in the contract')
 
@@ -256,11 +269,31 @@ def run_checks(repo: Path, contract_path: Path, app_name: str, check_names: bool
             "'az keyvault secret set' before deploying."
         )
 
-    # 6. Soft warning for missing health check path.
+    # 6. Secret hygiene (security audit L4): warn on committed env files and
+    # secret-looking app_settings keys. Secrets belong in kv_secrets only.
+    for env_file in sorted(repo.glob(".env*")):
+        if env_file.is_file():
+            warnings.append(
+                f"committed environment file '{env_file.name}' detected: it would be "
+                "packaged into the deploy artifact. Remove it and move secrets to kv_secrets."
+            )
+    app_settings = contract.get("app_settings") or {}
+    if isinstance(app_settings, dict):
+        for key in app_settings:
+            if re.search(
+                r"(?i)(password|passwd|secret|token|api[_-]?key|private[_-]?key|connection[_-]?string)",
+                str(key),
+            ):
+                warnings.append(
+                    f"app_settings key '{key}' looks secret: app_settings are stored in plaintext. "
+                    "Move it to kv_secrets (Key Vault reference) instead."
+                )
+
+    # 7. Soft warning for missing health check path.
     if not contract.get("health_check_path"):
         warnings.append("no health_check_path in contract; default /health will be used")
 
-    # 7. Optional Azure global name availability check.
+    # 8. Optional Azure global name availability check.
     if check_names:
         check_name_availability(app_name, failures, warnings)
 

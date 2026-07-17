@@ -89,6 +89,10 @@ jobs:
             -x '*/__pycache__/*' \
             -x 'venv/*' \
             -x '.venv/*' \
+            -x '.env' \
+            -x '.env.*' \
+            -x '*.pem' \
+            -x '*.key' \
             -x 'app.zip'
 
       - name: Upload artifact
