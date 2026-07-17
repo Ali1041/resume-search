@@ -1,0 +1,15 @@
+# Example backend config for the platform root.
+# Copy to backend.hcl, fill in the values, then:
+#   terraform init -backend-config=backend.hcl
+#
+# The azurerm backend acquires a blob lease on the state file for every
+# operation that writes state, so concurrent applies are serialized
+# automatically. No separate lock table is required for provider ~> 4.0.
+# State blobs are versioned if you enable blob versioning on the container
+# (recommended for recovery).
+
+resource_group_name  = "rg-ghr-tfstate"
+storage_account_name = "stghrtfstate" # globally unique, 3-24 lowercase alnum
+container_name       = "tfstate"
+key                  = "platform.tfstate"
+use_oidc             = true

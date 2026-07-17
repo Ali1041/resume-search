@@ -1,0 +1,12 @@
+# Example variables for the platform root. Copy to terraform.tfvars and adjust.
+
+project_name    = "ghr"
+location        = "canadacentral"
+app_service_sku = "S1" # S1 required when staging_mode = "slot"
+staging_mode    = "slot"
+
+tags = {
+  managed-by = "terraform"
+  project    = "ghr-platform"
+  cost-center = "ghr"
+}
