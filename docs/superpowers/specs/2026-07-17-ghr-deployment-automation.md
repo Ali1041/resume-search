@@ -166,3 +166,12 @@ Implemented as:
 Open follow-up: database *provisioning* remains manual (one command per
 environment); automating per-app DB creation is a Phase 2 candidate now that
 the branch model makes staging DBs a first-class concept.
+
+**Boundary decision (2026-07-20, Ali):** automation manages AZURE ONLY. All
+GitHub-side configuration — org secrets, repo secrets
+(`DATABASE_URL_STAGING`/`DATABASE_URL_PRODUCTION`), OIDC federated credentials,
+workflow `env:` values, branch creation/protection — is **manual operator work
+for the foreseeable future**. The scripts must never manage GitHub secrets
+(verified: `gh` is used only for read-only clones). This keeps the credential
+blast radius on the Azure side, where Terraform state already records what
+exists.

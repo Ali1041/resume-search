@@ -35,6 +35,7 @@ The file `azure-deploy.json` at the repo root tells the platform how to run this
   2. Declare it in `kv_secrets`: `"DATABASE_URL": "database-url"`.
   3. The platform injects it as a Key Vault reference. The app reads it as a normal env var.
 - If the app has a database, the operator also creates two **repo secrets** so CI can run migrations: `DATABASE_URL_STAGING` and `DATABASE_URL_PRODUCTION`.
+- All GitHub-side secrets are created **manually by the operator** — the deployment automation manages Azure resources only and never touches GitHub secrets.
 - Rotating a secret? The app caches Key Vault references — **restart the app after rotation**.
 
 ## Database migrations — the rules

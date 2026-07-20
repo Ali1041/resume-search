@@ -60,6 +60,10 @@ Key Vault (see below).
    CI: `DATABASE_URL_STAGING` and `DATABASE_URL_PRODUCTION`. From then on, every
    merge to `staging` or `main` deploys the matching environment automatically.
 
+   > Note: everything in this step is **manual by design**. The automation
+   > manages Azure resources only — GitHub secrets and workflow values are set
+   > by the operator by hand, never by the scripts.
+
 ## If preflight refuses your app
 
 Read the failure message — it names the exact file that is out of contract

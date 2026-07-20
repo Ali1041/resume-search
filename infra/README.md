@@ -7,6 +7,19 @@ the operator runbook ("the workings").
 Plan of record: `docs/superpowers/specs/2026-07-17-ghr-deployment-automation.md`
 (v2, post-review). All Critical/Major review findings are addressed in code here.
 
+> **The boundary (deliberate, do not blur): automation touches AZURE ONLY.**
+> Terraform and `deploy.sh` create and manage Azure resources — web apps, slots,
+> Key Vaults, RBAC, app settings, and the Key Vault *references* that wire
+> secrets into apps. Everything on the GITHUB side is **manual operator work,
+> forever for now**: org secrets (`AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/
+> `AZURE_SUBSCRIPTION_ID`), repo secrets (`DATABASE_URL_STAGING`/
+> `DATABASE_URL_PRODUCTION`), OIDC federated credentials, the `env:` values in
+> each app's workflow, branch creation, and branch protection. The scripts
+> contain **no** GitHub secret management by design (verified: `gh` is used only
+> for read-only repo clones). When you onboard an app, the GitHub-side steps are
+> a checklist you run by hand — they are documented as manual commands in §2.2,
+> §2.3, §3.1, and §4, never scripted.
+
 ```
 infra/
 ├── platform/            # ONE-TIME shared infra (resource group + shared App Service Plan)
