@@ -196,6 +196,49 @@ infra/scripts/deploy.sh deploy https://github.com/<org>/<repo> --app-name <name>
 
 ---
 
+## 3.1 Branch → environment model (all apps, current and future)
+
+Every app repo has two long-lived branches, and **merging is the deploy button**:
+
+| Branch | Merging into it... | Database migrated |
+|---|---|---|
+| `staging` | deploys the STAGING app/slot | STAGING database |
+| `main` | deploys the PRODUCTION app | PRODUCTION database |
+
+Daily flow for every change:
+
+```
+feature/<name>  --PR-->  staging  --verify on staging URL--PR-->  main
+```
+
+- **Database migrations run automatically in CI** (the `db_migration_command`
+  contract field / `DB_MIGRATION_COMMAND` workflow env), AFTER deps install and
+  BEFORE the new code goes live. The old code keeps serving while migrations
+  apply, so migrations MUST be backward-compatible (expand/contract) and
+  forward-only — never edit an applied migration.
+- **CI needs the DB connection strings as repo secrets** (Key Vault references
+  only resolve inside the running app; the migration runner needs raw values).
+  Operator creates them once per app:
+  ```bash
+  gh secret set DATABASE_URL_STAGING    --repo <org>/<repo> --body "mysql://.../app_staging"
+  gh secret set DATABASE_URL_PRODUCTION --repo <org>/<repo> --body "mysql://.../app_production"
+  ```
+  (For DB-less apps neither the secrets nor `db_migration_command` are set and
+  the migration step skips itself.)
+- **Firewall note:** GitHub-hosted runners must be able to reach the database
+  server. For Azure MySQL/Postgres, either enable "Allow public access from any
+  Azure service" or add runner IP ranges; otherwise the migration step fails
+  with a connection error.
+- **deploy.sh `--branch <name>`** only selects which branch is cloned for
+  validation/provisioning. Day-to-day branch deploys never touch deploy.sh —
+  they run entirely in the app's GitHub Actions.
+- Example (Touchpoint): `db_migration_command = "npm run db:push"` (drizzle-kit
+  generate + migrate), MySQL databases `touchpoint_staging` / `touchpoint` —
+  merge a PR to `staging` → staging app + `touchpoint_staging` updated; merge
+  `staging` to `main` → prod app + `touchpoint` updated.
+
+---
+
 ## 4. Secrets runbook
 
 Terraform creates the vault and the RBAC; **secrets are never created by

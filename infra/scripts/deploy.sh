@@ -3,10 +3,14 @@
 # deploy.sh — the GHR deployment wrapper. The ONLY apply path in v1.
 #
 #   deploy.sh deploy <git-url-or-local-path> [--app-name NAME] [--env staging|prod]
-#                    [--staging-mode slot|app] [--contract PATH] [--yes]
+#                    [--staging-mode slot|app] [--contract PATH] [--branch NAME] [--yes]
 #   deploy.sh destroy <app-name>
 #
 # Flow: preflight -> terraform plan -> human gate -> apply -> smoke test -> URL.
+#
+# --branch only selects which branch is cloned for validation/provisioning.
+# Ongoing branch->environment deploys (staging branch -> staging app+DB,
+# main -> prod app+DB) run in the app's GitHub Actions, not here.
 #
 # Environment variables:
 #   STAGING_MODE            default staging mode (slot|app), default "slot"
@@ -30,7 +34,7 @@ usage() {
   cat <<'EOF'
 Usage:
   deploy.sh deploy <git-url-or-local-path> [--app-name NAME] [--env staging|prod]
-                   [--staging-mode slot|app] [--contract PATH] [--yes]
+                   [--staging-mode slot|app] [--contract PATH] [--branch NAME] [--yes]
   deploy.sh destroy <app-name>
 EOF
 }
@@ -140,14 +144,16 @@ resolve_platform() {
 }
 
 clone_source() {
-  local url="$1" dest="$2"
+  local url="$1" dest="$2" branch="${3:-}"
+  local branch_args=()
+  [[ -n "$branch" ]] && branch_args=(--branch "$branch")
   if command -v gh >/dev/null 2>&1; then
-    if gh repo clone "$url" "$dest" -- --depth 1; then
+    if gh repo clone "$url" "$dest" -- --depth 1 ${branch_args[@]+"${branch_args[@]}"}; then
       return 0
     fi
     echo "gh repo clone failed; falling back to git clone" >&2
   fi
-  git clone --depth 1 "$url" "$dest"
+  git clone --depth 1 ${branch_args[@]+"${branch_args[@]}"} "$url" "$dest"
 }
 
 smoke_test() {
@@ -191,7 +197,7 @@ notify_slack() {
 
 cmd_deploy() {
   local source="" app_name="" env_target="prod" contract_arg="" assume_yes="false"
-  local staging_mode="${STAGING_MODE:-slot}"
+  local staging_mode="${STAGING_MODE:-slot}" branch=""
 
   # Temp artifacts (clone dir, plan file, tfvars dir) are globals so the EXIT
   # trap can clean them up on every exit path, including die (security audit L3).
@@ -205,6 +211,7 @@ cmd_deploy() {
       --app-name) app_name="$2"; shift 2 ;;
       --env) env_target="$2"; shift 2 ;;
       --staging-mode) staging_mode="$2"; shift 2 ;;
+      --branch) branch="$2"; shift 2 ;;
       --contract) contract_arg="$2"; shift 2 ;;
       --yes) assume_yes="true"; shift ;;
       -h|--help) usage; exit 0 ;;
@@ -233,8 +240,8 @@ cmd_deploy() {
       || die "unsupported repo URL scheme (expected https:// or git@...): $source"
     work_dir="$(mktemp -d -t ghr-deploy)"
     repo_dir="${work_dir}/repo"
-    echo "cloning $source ..."
-    clone_source "$source" "$repo_dir"
+    echo "cloning $source${branch:+ (branch $branch)} ..."
+    clone_source "$source" "$repo_dir" "$branch"
   fi
 
   if [[ -z "$app_name" ]]; then

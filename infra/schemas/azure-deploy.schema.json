@@ -35,6 +35,11 @@
       "type": "string",
       "minLength": 1
     },
+    "db_migration_command": {
+      "description": "Optional command CI runs BEFORE each deploy to apply database migrations (e.g. \"npm run db:push\" for drizzle, \"alembic upgrade head\"). Runs against the target environment's DATABASE_URL: pushes to the staging branch migrate the staging DB, pushes to main migrate the production DB. Migrations must be backward-compatible and forward-only. Requires the repo secrets DATABASE_URL_STAGING / DATABASE_URL_PRODUCTION (operator-created).",
+      "type": "string",
+      "minLength": 1
+    },
     "health_check_path": {
       "description": "Path Azure pings for health checks and the deploy smoke test. Defaults to /health when omitted.",
       "type": "string",

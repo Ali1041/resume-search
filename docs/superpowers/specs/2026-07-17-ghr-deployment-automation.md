@@ -132,3 +132,37 @@ Accuracy is a function of repo contract conformance.
 3. GHR GitHub org name confirmed? Needed for OIDC + private-repo access. *(Ali)*
 4. Slack channel for deploy notifications? *(Ben)*
 5. GHR org repos created after 2026-07-15 — verify OIDC `sub` claim format before designing federated credentials. *(Ali, during task 4)*
+
+---
+
+## Amendment 2026-07-20: Branch → environment model
+
+Decision (Ali): all current and future apps use a fixed two-branch model —
+`staging` branch deploys the staging app + staging DB, `main` deploys the
+production app + production DB. Flow: feature → PR → `staging` → verify → PR →
+`main`.
+
+Implemented as:
+
+- **Workflow template** triggers on pushes to both branches; a `resolve` job
+  maps branch → target (main→production, staging→staging) and computes
+  app/slot names per `STAGING_MODE`. OIDC permission (`id-token: write`) is now
+  scoped to the deploy job only.
+- **Database migrations run in CI** via new contract field
+  `db_migration_command` (schema v1 extended; e.g. `npm run db:push` for
+  drizzle). Runs after deps install, before code deploy, against the target
+  branch's database. Connection strings come from repo secrets
+  `DATABASE_URL_STAGING` / `DATABASE_URL_PRODUCTION` (operator-created; the
+  deploy SP intentionally still has no Key Vault data-plane access, so KV can't
+  be the CI source). Migrations must be backward-compatible + forward-only —
+  enforced socially via the app-repo CLAUDE.md, which is also why migrations
+  run *before* code deploy.
+- **preflight** warns when DB markers + `kv_secrets` exist but
+  `db_migration_command` is missing (schema changes would silently not apply).
+- **deploy.sh `--branch`** selects which branch is cloned for validation;
+  ongoing branch deploys never touch deploy.sh (CI-only concern).
+- Docs updated: infra README §3.1, app-repo CLAUDE.md (new git flow), REGISTER.md.
+
+Open follow-up: database *provisioning* remains manual (one command per
+environment); automating per-app DB creation is a Phase 2 candidate now that
+the branch model makes staging DBs a first-class concept.

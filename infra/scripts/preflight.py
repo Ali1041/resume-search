@@ -268,11 +268,20 @@ def run_checks(repo: Path, contract_path: Path, app_name: str, check_names: bool
             "azure-deploy.json and ask the operator to create the secret with "
             "'az keyvault secret set' before deploying."
         )
+    if db_markers and kv_secrets and not contract.get("db_migration_command"):
+        warnings.append(
+            "database detected but no db_migration_command in contract: schema changes "
+            "will NOT run automatically in CI. Add e.g. \"db_migration_command\": "
+            "\"npm run db:push\" (drizzle) or \"alembic upgrade head\"."
+        )
 
     # 6. Secret hygiene (security audit L4): warn on committed env files and
     # secret-looking app_settings keys. Secrets belong in kv_secrets only.
+    # Example/template env files (.env.example, .env.sample, ...) are committed
+    # deliberately and carry no secrets — skip them.
+    env_template_suffixes = (".example", ".sample", ".template", ".dist")
     for env_file in sorted(repo.glob(".env*")):
-        if env_file.is_file():
+        if env_file.is_file() and not env_file.name.endswith(env_template_suffixes):
             warnings.append(
                 f"committed environment file '{env_file.name}' detected: it would be "
                 "packaged into the deploy artifact. Remove it and move secrets to kv_secrets."

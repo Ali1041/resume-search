@@ -13,11 +13,29 @@
 #     gh api /repos/<org>/<repo>/actions/oidc/customization/sub
 #   If in doubt, create a per-repo federated credential with the exact subject.
 #
-#   Secrets come from GitHub ORG secrets (no repo-level secrets needed):
+#   Secrets come from GitHub ORG secrets (no repo-level setup needed):
 #     AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
 #
-# FILL IN BEFORE FIRST PUSH: AZURE_WEBAPP_NAME, STAGING_MODE, RUNTIME below
-# (values are printed by deploy.sh after the first manual deployment).
+# BRANCH MODEL (branches map to environments):
+#   push to `staging` -> deploy STAGING app/slot + run migrations on STAGING DB
+#   push to `main`    -> deploy PRODUCTION app  + run migrations on PROD DB
+#   Daily flow: feature branch -> PR into `staging` -> verify on staging URL ->
+#   PR `staging` into `main`. Never push directly to either branch.
+#
+# DATABASE MIGRATIONS:
+#   If DB_MIGRATION_COMMAND is set (mirrors db_migration_command in
+#   azure-deploy.json), it runs BEFORE the new code goes live, against the
+#   target environment's database. Connection strings come from REPO secrets
+#   created by the operator (never committed):
+#     DATABASE_URL_STAGING     (used for deploys from the staging branch)
+#     DATABASE_URL_PRODUCTION  (used for deploys from the main branch)
+#   Migrations MUST be backward-compatible (expand/contract) and forward-only:
+#   the old code keeps running while migrations apply. Never edit an applied
+#   migration — fix forward with a new one.
+#
+# FILL IN BEFORE FIRST PUSH: AZURE_WEBAPP_NAME, STAGING_MODE, RUNTIME, and
+# DB_MIGRATION_COMMAND below (values are printed by deploy.sh after the first
+# manual deployment).
 #
 # All actions are pinned to full commit SHAs (supply-chain hardening). Update
 # deliberately; the trailing comment records the human-readable version.
@@ -26,7 +44,7 @@ name: deploy
 
 on:
   push:
-    branches: [main] # push to main deploys PRODUCTION
+    branches: [main, staging] # main -> production, staging -> staging
   workflow_dispatch:
     inputs:
       target:
@@ -39,17 +57,56 @@ on:
           - production
 
 permissions:
-  id-token: write # OIDC token for azure/login
   contents: read
 
 env:
   AZURE_WEBAPP_NAME: "CHANGE-ME" # e.g. ghr-timesheet (terraform output web_app_name)
   STAGING_MODE: "slot" # slot = staging slot on S1+ plan; app = separate <name>-staging web app
   RUNTIME: "node" # node | python
+  DB_MIGRATION_COMMAND: "" # e.g. "npm run db:push" (drizzle) or "alembic upgrade head"; empty = app has no DB
   ARTIFACT_NAME: "app-zip"
 
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      target: ${{ steps.t.outputs.target }}
+      app_name: ${{ steps.t.outputs.app_name }}
+      slot_name: ${{ steps.t.outputs.slot_name }}
+    steps:
+      - name: Resolve deploy target
+        id: t
+        shell: bash
+        run: |
+          # push to main -> production; push to staging -> staging;
+          # workflow_dispatch -> the chosen target.
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            if [[ "${{ github.ref_name }}" == "main" ]]; then
+              target="production"
+            else
+              target="staging"
+            fi
+          else
+            target="${{ inputs.target || 'production' }}"
+          fi
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+
+          # slot mode: staging = slot named 'staging'; production = the app itself
+          #            (slot-name EMPTY — never the literal 'production').
+          # app mode:  staging = separate web app '<name>-staging'; production = '<name>'.
+          if [[ "$target" == "staging" && "$STAGING_MODE" == "slot" ]]; then
+            echo "app_name=$AZURE_WEBAPP_NAME" >> "$GITHUB_OUTPUT"
+            echo "slot_name=staging" >> "$GITHUB_OUTPUT"
+          elif [[ "$target" == "staging" ]]; then
+            echo "app_name=${AZURE_WEBAPP_NAME}-staging" >> "$GITHUB_OUTPUT"
+            echo "slot_name=" >> "$GITHUB_OUTPUT"
+          else
+            echo "app_name=$AZURE_WEBAPP_NAME" >> "$GITHUB_OUTPUT"
+            echo "slot_name=" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: resolve
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -79,6 +136,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # Migrations run AFTER dependencies are installed (the migration tool
+      # comes from the app's own deps) and BEFORE the new code goes live.
+      # The step is skipped entirely for apps without a database.
+      - name: Run database migrations
+        if: env.DB_MIGRATION_COMMAND != ''
+        env:
+          DATABASE_URL: ${{ needs.resolve.outputs.target == 'production' && secrets.DATABASE_URL_PRODUCTION || secrets.DATABASE_URL_STAGING }}
+        run: |
+          if [[ -z "$DATABASE_URL" ]]; then
+            echo "::error::DATABASE_URL secret for target '${{ needs.resolve.outputs.target }}' is not set. Ask the operator to create the repo secret (DATABASE_URL_STAGING / DATABASE_URL_PRODUCTION)."
+            exit 1
+          fi
+          ${{ env.DB_MIGRATION_COMMAND }}
+
       - name: Package artifact
         shell: bash
         run: |
@@ -103,36 +174,16 @@ jobs:
           retention-days: 7
 
   deploy:
-    needs: build
+    needs: [resolve, build]
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write # OIDC token for azure/login (deploy job only)
+      contents: read
     steps:
       - name: Download artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ${{ env.ARTIFACT_NAME }}
-
-      - name: Resolve deploy target
-        id: target
-        shell: bash
-        env:
-          REQUESTED_TARGET: ${{ inputs.target || 'production' }}
-        run: |
-          # push to main -> production; workflow_dispatch -> the chosen target.
-          # slot mode: staging = slot named 'staging'; production = the app itself
-          #            (slot-name EMPTY — never the literal 'production').
-          # app mode:  staging = separate web app '<name>-staging'; production = '<name>'.
-          if [[ "$REQUESTED_TARGET" == "staging" ]]; then
-            if [[ "$STAGING_MODE" == "slot" ]]; then
-              echo "app_name=$AZURE_WEBAPP_NAME" >> "$GITHUB_OUTPUT"
-              echo "slot_name=staging" >> "$GITHUB_OUTPUT"
-            else
-              echo "app_name=${AZURE_WEBAPP_NAME}-staging" >> "$GITHUB_OUTPUT"
-              echo "slot_name=" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            echo "app_name=$AZURE_WEBAPP_NAME" >> "$GITHUB_OUTPUT"
-            echo "slot_name=" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Azure login (OIDC)
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
@@ -141,9 +192,9 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy to Azure Web App
+      - name: Deploy to Azure Web App (${{ needs.resolve.outputs.target }})
         uses: azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3.0.8
         with:
-          app-name: ${{ steps.target.outputs.app_name }}
-          slot-name: ${{ steps.target.outputs.slot_name }}
+          app-name: ${{ needs.resolve.outputs.app_name }}
+          slot-name: ${{ needs.resolve.outputs.slot_name }}
           package: app.zip

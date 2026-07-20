@@ -3,12 +3,13 @@
 This app deploys to Azure App Service through GHR's deployment automation.
 Keep this file short and follow it exactly.
 
-## Git flow
+## Git flow: branches map to environments
 
-- `main` is the **production** branch. Every push to `main` deploys to production automatically.
-- Always `git pull origin main` before starting work.
-- Create a feature branch per change (`feature/<short-name>`), open a PR to `main`.
-- Never push directly to `main`. Never commit secrets (`.env`, API keys, connection strings).
+- `main` = **production**. Merging into `main` deploys the production app and runs database migrations against the **production** database.
+- `staging` = **staging**. Merging into `staging` deploys the staging app/slot and runs migrations against the **staging** database.
+- Daily work: `feature/<short-name>` branch → PR into `staging` → verify on the staging URL → PR `staging` into `main`.
+- Always `git pull origin <branch>` before starting work on it.
+- **Never push directly to `main` or `staging`.** Never commit secrets (`.env`, API keys, connection strings).
 
 ## The deployment contract: `azure-deploy.json`
 
@@ -21,6 +22,7 @@ The file `azure-deploy.json` at the repo root tells the platform how to run this
 | `runtime_version` | Optional. e.g. `"20-lts"` (node) or `"3.11"` (python). Omit for platform default. |
 | `startup_command` | Optional for node, **required for python**. e.g. `gunicorn --bind 0.0.0.0:8000 app:server`. |
 | `build_command` | Optional build hint for CI. |
+| `db_migration_command` | Optional. Command CI runs before each deploy to apply migrations, e.g. `npm run db:push`. Runs against the target branch's database (staging → staging DB, main → prod DB). |
 | `health_check_path` | Optional, default `/health`. Must return HTTP 200 when the app is up — the deploy smoke test hits it. |
 | `app_settings` | Non-secret environment variables ONLY. |
 | `kv_secrets` | Map of `ENV_VAR_NAME` → Key Vault secret name for secrets. |
@@ -32,7 +34,15 @@ The file `azure-deploy.json` at the repo root tells the platform how to run this
   1. Ask the operator to create it: `az keyvault secret set --vault-name <app-vault> --name <secret-name> --value <value>`.
   2. Declare it in `kv_secrets`: `"DATABASE_URL": "database-url"`.
   3. The platform injects it as a Key Vault reference. The app reads it as a normal env var.
+- If the app has a database, the operator also creates two **repo secrets** so CI can run migrations: `DATABASE_URL_STAGING` and `DATABASE_URL_PRODUCTION`.
 - Rotating a secret? The app caches Key Vault references — **restart the app after rotation**.
+
+## Database migrations — the rules
+
+- Migrations run **automatically in CI on every merge** (via `db_migration_command`), BEFORE the new code goes live.
+- They must be **backward-compatible** (expand/contract): the old code keeps running while migrations apply. Add columns/tables first, remove in a later release.
+- **Forward-only**: never edit or delete an applied migration. Fix a bad one with a new migration.
+- Generate, don't hand-write (drizzle: `drizzle-kit generate && drizzle-kit migrate`).
 
 ## Adding a database dependency
 
@@ -40,11 +50,12 @@ Adding `drizzle`, `prisma`, `knex`, `sqlalchemy`, `psycopg2`, or `asyncpg` to th
 changes the deployment: preflight will REFUSE to deploy until a `kv_secrets` entry
 declares the connection string. Coordinate with the operator BEFORE merging.
 
-## What happens on push to `main`
+## What happens on merge
 
-1. GitHub Actions builds a zip (deps installed, `npm run build --if-present` for node).
-2. The zip is deployed to the Azure Web App with OIDC (no stored credentials).
-3. The health check path must return 200 or the deploy is treated as failed.
+1. GitHub Actions installs deps and builds (zip artifact).
+2. If `db_migration_command` is set, migrations run against the target branch's database.
+3. The zip is deployed to the matching Azure Web App (or staging slot) with OIDC — no stored credentials.
+4. The health check path must return 200 or the deploy is treated as failed.
 
 ## Hard boundaries (out of contract — ask the operator first)
 

@@ -8,5 +8,7 @@
   "health_check_path": "/health",
   "app_settings": {
     "NODE_ENV": "production"
-  }
+  },
+  "$comment_migrations": "db_migration_command only matters when the app has a database (kv_secrets declares DATABASE_URL). CI runs it on every merge — against the STAGING database for pushes to the staging branch, PRODUCTION for pushes to main. Migrations must be backward-compatible and forward-only. Delete the field if the app has no DB.",
+  "db_migration_command": "npm run db:push"
 }

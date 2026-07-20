@@ -32,8 +32,13 @@ Key Vault (see below).
    "kv_secrets": { "DATABASE_URL": "database-url" }
    ```
    (The operator runs `az keyvault secret set` once the app's vault exists.)
+   Also set `db_migration_command` (e.g. `"npm run db:push"`) so schema changes
+   apply automatically on every merge.
 
-4. **Create the repo in the GHR GitHub org** and push your code.
+4. **Create the repo in the GHR GitHub org**, create a `staging` branch, and
+   push your code. Branches map to environments:
+   - merge into `staging` → deploys the staging app/slot + migrates the staging DB
+   - merge into `main` → deploys the production app + migrates the production DB
 
 5. **Send the repo URL to the operator (Ali).** He runs:
    ```
@@ -49,9 +54,11 @@ Key Vault (see below).
    - the app's Key Vault name (for secret requests)
 
 7. **Wire up CI for ongoing deploys:** in `.github/workflows/deploy.yml`, set
-   `AZURE_WEBAPP_NAME`, `STAGING_MODE`, and `RUNTIME` to the values the operator
-   gives you. From then on, every push to `main` deploys to production
-   automatically; manual workflow runs can target staging.
+   `AZURE_WEBAPP_NAME`, `STAGING_MODE`, `RUNTIME`, and (if the app has a DB)
+   `DB_MIGRATION_COMMAND` to the values the operator gives you. If the app has a
+   database, the operator also creates two repo secrets so migrations can run in
+   CI: `DATABASE_URL_STAGING` and `DATABASE_URL_PRODUCTION`. From then on, every
+   merge to `staging` or `main` deploys the matching environment automatically.
 
 ## If preflight refuses your app
 
