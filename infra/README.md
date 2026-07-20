@@ -351,11 +351,68 @@ artifact to the production app. B1 limits (no slots, no swap, shared CPU) apply.
 
 ---
 
+## 9. Gotchas — read this BEFORE running the script
+
+Everything on this page has bitten someone at least once.
+
+**Machine prerequisites (one-time, ~5 min):**
+- `terraform` (≥1.5), `python3` + `pip3 install --user jsonschema` (**hard
+  requirement for deploys** — standalone preflight can skip it, deploy.sh cannot),
+  `az` CLI logged in (`az login`), `jq` (optional nicety).
+- **`git` is enough.** `gh` (GitHub CLI) is optional — the script tries
+  `gh repo clone` first only because gh handles PRIVATE repo auth automatically,
+  then falls back to plain `git clone`. With just git: public repos always work;
+  private repos work if you have an SSH key or credential helper configured.
+  You never need to install gh for the script itself.
+
+**When running `deploy.sh deploy`:**
+1. **First deploy = empty house.** The script builds Azure infrastructure; the
+   app CODE arrives separately via the repo's GitHub Actions (on push/merge).
+   So on the very first run the smoke test may fail with a 404 — that usually
+   just means no code has been deployed yet. Merge to `staging`/`main`, wait
+   2-3 minutes, check the URL again. Not a bug.
+2. **Smoke test failure = exit code 2, and the infrastructure is FINE.** The
+   script prints the exact `az webapp log tail` command — go read the logs.
+   Don't re-run the deploy hoping it changes; the problem is in the app or its
+   settings (missing secret, wrong startup command), not in Terraform.
+3. **The typed gate is intentional.** You must type the app name before anything
+   is applied. `--yes` skips it — fine when re-running something you already
+   reviewed, NEVER hand it to automation.
+4. **Refusals are the product, not a failure.** Monorepo, Dockerfile, background
+   worker, or database-without-declared-secret → the script refuses and says
+   "route to a human". That app needs a custom deployment, not a retry.
+5. **Staging-mode mismatch stops early.** If the platform was applied with
+   `staging_mode=slot` and you run with `--staging-mode app` (or vice versa),
+   the script refuses. Match the flag, or re-apply the platform root.
+6. **Secrets are ALWAYS manual.** Azure side: `az keyvault secret set` once per
+   app (the script prints the vault name). GitHub side: repo/org secrets by
+   hand. After rotating a secret, RESTART the app — Key Vault references are
+   cached.
+7. **App names are globally unique across all of Azure.** If the name is taken,
+   preflight's `--check-names` catches it (needs `az`); otherwise the apply
+   fails late with a naming error — pick a new name, don't force it.
+
+**When running `deploy.sh destroy`:**
+8. Typed confirmation required; it physically cannot touch the shared platform
+   (guard built in). The app's Key Vault is **soft-deleted: its name stays
+   reserved for 90 days**. Re-deploying the same app soon? `az keyvault recover`
+   (restore) or `az keyvault purge` (permanent — irreversible).
+
+**General:**
+9. **Every app is isolated** — own Terraform state (`apps/<name>.tfstate`), own
+   Key Vault. One app breaking never affects another. Re-running deploy.sh on
+   the same app is safe (Terraform is idempotent; it plans a diff).
+10. **Run it from anywhere** — paths resolve relative to the script location.
+    You need network access to Azure (and GitHub if cloning, not using a local
+    path).
+
+---
+
 ## Appendix — deploy.sh reference
 
 ```
 deploy.sh deploy <git-url-or-local-path> [--app-name NAME] [--env staging|prod]
-                 [--staging-mode slot|app] [--contract PATH] [--yes]
+                 [--staging-mode slot|app] [--contract PATH] [--branch NAME] [--yes]
 deploy.sh destroy <app-name>
 ```
 
