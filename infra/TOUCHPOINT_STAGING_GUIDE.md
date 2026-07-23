@@ -1,103 +1,117 @@
-# Touchpoint Staging Environment — Operator Runbook (Case B)
+# Touchpoint Staging — Full Picture from Step 0 (Case B)
 
-**Goal:** `https://touchpoint-rwh-staging.azurewebsites.net` serving the `staging`
-branch, wired to a `touchpoint_staging` MySQL database, auto-deploying on every
-merge to `staging`. Case B = separate staging web app on the cheap B1 plan (no slots).
+**What this is:** the complete, ordered story of deploying Touchpoint's staging
+environment with the automation — what happens, when, why, what access each step
+needs, and every mistake we made getting here so nobody repeats them.
 
-**The access model (why this is nearly hands-off):** every step below needs the
-*minimum* access that can do the job, each step needs it *once*, and after setup
-the only ongoing action is "merge a PR". Nothing stores a long-lived credential
-anywhere: your local `az login` drives Terraform, GitHub Actions will use OIDC
-(short-lived tokens, no secrets), and secrets live only in Azure Key Vault +
-GitHub repo secrets (entered by hand, never by scripts).
+**Target end state:** `https://touchpoint-rwh-staging.azurewebsites.net` serving
+the `staging` branch, wired to a `touchpoint_staging` MySQL DB, auto-deploying
+on every merge to `staging`. Case B = separate staging web app on a cheap B1
+shared plan (~$13/mo), no slots.
 
 ---
 
-## Access & why — the complete table
+## 0. Current state after the reset (2026-07-20)
 
-| # | Step | Access required | Why this much and no more | How often |
-|---|---|---|---|---|
-| 0 | Operator machine tools: `terraform`, `az` CLI, `python3`+`jsonschema`, `git` | Local install | The script's only dependencies (`gh` NOT required — plain git is enough) | Once |
-| 1 | `infra/platform` apply | Your `az login` with Contributor on the subscription | Creates the shared resource group + App Service Plan. Nothing less can create resources; nothing more is needed | Once |
-| 2 | Terraform state storage (`rg-ghr-tfstate` + `stghrtfstate`) | Same `az login` | Holds state files. Backend uses `use_oidc` — no storage keys anywhere | Once (done) |
-| 3 | Staging database (`touchpoint_staging`) + migrations | MySQL admin | **Automation never creates databases** (data is the risky thing). One manual command, then `DATABASE_URL=... npm run db:push` | Once per environment |
-| 4 | App repo files (`azure-deploy.json`, `deploy.yml`, `staging` branch) | GitHub push to the repo | The repo carries its own contract + CI so app and config never drift | Once per app (done for Touchpoint) |
-| 5 | `deploy.sh deploy` | Same `az login` + `OPERATOR_OBJECT_ID` (your AAD object id: `az ad signed-in-user show --query id -o tsv`) | Creates the two web apps, per-app Key Vault, RBAC, App Insights. Your object id gets **Key Vault Secrets Officer on this app's vault only** — that's the access that lets you do step 6 | Once per app |
-| 6 | `az keyvault secret set` (the real MySQL URL) | The Secrets Officer role from step 5 | Terraform wires the *reference*; a human enters the *value*. Secrets never touch git or Terraform state | Once per secret |
-| 7 | GitHub repo secrets `DATABASE_URL_STAGING` / `DATABASE_URL_PRODUCTION` | Repo admin | CI's migration runner needs the raw connection string (Key Vault references only resolve inside the running app). **Manual by design: automation touches Azure only** | Once per app |
-| 8 | OIDC app registration + federated credential (README §2.2) | Entra ID Application Administrator | Lets GitHub Actions mint short-lived Azure tokens with **zero stored client secrets**. Without it, CI cannot deploy. Give it NO RG-level role — the per-app deployment grants Website Contributor per site (step 5's `DEPLOY_SP_OBJECT_ID`) | Once for the whole platform |
-| 9 | GitHub org secrets `AZURE_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID` | Org owner | Every app repo inherits them; no per-repo secret setup ever | Once for the whole platform |
+| Thing | State |
+|---|---|
+| `rg-ghr-platform` (B1 plan) | **DELETED** — nothing else was ever created (no apps, no vaults) |
+| tfstate storage (`stghrtfstate`) | **KEPT** — the name is globally reserved; the old state blob is inert (Terraform refresh self-heals; optionally delete the `platform.tfstate` blob once DNS is fixed) |
+| GitHub: `staging` branch + `chore/deployment-setup` PR on `Recovery-With-Heart/touchpoint` | **KEPT** (per your call) — PR: https://github.com/Recovery-With-Heart/touchpoint/compare/staging...chore/deployment-setup |
+| GitHub: infra code on `feature/ghr-deploy-automation` (resume-search) | **KEPT** |
+| Your Mac: terraform, `az login`, python3+`jsonschema`, git | **DONE** — no redo needed |
 
-After this table is done once, **ongoing access needed: none.** Daily work is
-merge-to-`staging` → auto-deploy, merge-to-`main` → auto-deploy.
+So the restart begins at **Phase B** below, not the very beginning.
 
 ---
 
-## Current state (as of 2026-07-20)
+## 1. The full sequence — what, when, why
 
-- [x] Step 1–2: platform applied — `rg-ghr-platform` + `asp-ghr-shared` (B1, canadaeast, `staging_mode=app`)
-- [x] Step 3: `touchpoint_staging` DB — **Ali to confirm done**
-- [x] Step 4: `staging` branch created on GitHub; `chore/deployment-setup` pushed
-  (PR: https://github.com/Recovery-With-Heart/touchpoint/compare/staging...chore/deployment-setup)
-- [x] Preflight: PASS (0 warnings)
-- [ ] Step 5: **deploy.sh — BLOCKED on local DNS** (see Troubleshooting T1)
-- [ ] Steps 6–9
+### Phase A — platform plumbing (once, ever, for ALL apps)
 
-## Remaining steps, in order
+| Step | What | When | Why |
+|---|---|---|---|
+| A1 | Machine tools: terraform, az CLI, `pip3 install --user --break-system-packages jsonschema`, git | Once | The script's only dependencies. `git` alone is enough (`gh` optional). jsonschema is a hard deploy requirement |
+| A2 | tfstate storage account + container | Once | Holds Terraform state remotely with blob-lease locking. `use_oidc` = no keys stored |
+| A3 | OIDC app registration + GitHub org secrets (`AZURE_CLIENT_ID`/`TENANT_ID`/`SUBSCRIPTION_ID`) | Once, **only when CI deploys** (not needed for the first manual staging run) | Lets GitHub Actions get short-lived Azure tokens with zero stored secrets. Manual by design — automation touches Azure only |
+
+### Phase B — shared platform + data (once per platform)
+
+| Step | What | When | Why |
+|---|---|---|---|
+| B1 | `infra/platform`: tfvars (`location="canadaeast"`, `app_service_sku="B1"`, `staging_mode="app"`) → `terraform init -backend-config=backend.hcl` → `apply` | **NOW — first thing after reset** | One cheap home for every app. canadaeast matches existing prod. B1+app-mode = the ~$13/mo scenario (no S1 needed) |
+| B2 | Create MySQL DB `touchpoint_staging` + `DATABASE_URL=... npm run db:push` | Before C4 (CI needs it) | **Automation never creates databases** — data is the risky thing. Staging must never share prod's DB |
+
+### Phase C — the app (once per app)
+
+| Step | What | When | Why |
+|---|---|---|---|
+| C1 | Repo carries `azure-deploy.json` + `.github/workflows/deploy.yml` + `staging` branch | **DONE** | Repo = source of truth; app and its deploy config can't drift |
+| C2 | `deploy.sh deploy` (typed-name gate) creates the app pair + per-app Key Vault + RBAC + App Insights | After B1 | Codified, reviewable infra with a human checkpoint. `--staging-mode app` must match B1's tfvars |
+| C3 | `az keyvault secret set` — the real MySQL URL (staging DB) | After C2 (vault exists) | Terraform wires the *reference*; a human enters the *value*. Secrets never touch git/state |
+| C4 | Merge the chore PR to `staging`; set repo secret `DATABASE_URL_STAGING`; CI builds → migrates → deploys | After C3 | Merging IS the deploy button. Repo secret is manual (automation = Azure only) |
+| C5 | `curl -I https://touchpoint-rwh-staging.azurewebsites.net` (503 → restart app once) | After C4 | KV references are cached; a restart resolves them the first time |
+
+### Phase D — daily life (zero access): feature → PR → `staging` → verify → PR → `main`.
+
+---
+
+## 2. Access & why (minimal, hands-off)
+
+| Access | Held by | Needed for | Scope |
+|---|---|---|---|
+| Your `az login` (Contributor on sub) | You, locally | Phases A–C terraform applies + KV secret | The only Azure credential anywhere; nothing stored |
+| MySQL admin | You | B2 | One database create, one migration run |
+| GitHub push/admin on the repo | You | C1, C4 (branches, PR merge, repo secrets) | Repo only |
+| Entra ID App Administrator | You (later, A3) | OIDC registration | Once, platform-wide |
+| GitHub Actions deploy SP | Azure (OIDC) | CI deploys | **Website Contributor per app only** — never RG-wide, never Key Vault data-plane |
+
+---
+
+## 3. Mistakes we made (the honest log)
+
+| # | Mistake | Cost | Fix / lesson (now in docs) |
+|---|---|---|---|
+| 1 | **I treated the `touchpoint-main` zip extract as a git repo** — it has no `.git`, so nothing reached GitHub and you found no staging branch | Your time + frustration | Always verify `.git` before git operations. The real repo is `/Users/aliamin/Documents/Work/touchpoint` |
+| 2 | **My guide taught the `--contract` shortcut before the repo-first design**, so Step 3 made no sense and you had to ask | Confusion | README §3 rewritten: repo files are committed FIRST; `--contract` documented as test-only |
+| 3 | App name `touchpoint` is **globally taken** on Azure | One failed run | Preflight's name check caught it early (worked as designed); renamed `touchpoint-rwh` |
+| 4 | `jsonschema` missing; plain `pip3 install --user` blocked by PEP 668 on modern macOS | One failed run | Install with `--break-system-packages`; now in the prereqs |
+| 5 | `infra/app/backend.hcl` didn't exist — deploy can't reach state without it | One failed run | Created (platform backend config minus the `key`); now in this guide (B1 note) |
+| 6 | **macOS DNS cache couldn't resolve the blob-storage host** while `nslookup` succeeded | Blocked deploy, debugging detour | `sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder`. Trust `ping`, not `nslookup`, for this check |
+| 7 | Template assumed **npm**; Touchpoint uses **pnpm** | Would have failed in CI | Touchpoint's workflow copy uses `corepack` + `pnpm install --frozen-lockfile` |
+| 8 | Contract said Node **20**; Touchpoint's CI builds on **22** | Version drift | Contract + workflow set to 22 |
+| 9 | Repo file is `claude.md` (lowercase) — my first commit missed it (case) | One extra commit | Stage exact paths; macOS FS is case-insensitive, git is not |
+| 10 | **My communication**: too much debugging noise, answers buried | Your patience | Guides now lead with the answer, details after |
+
+---
+
+## 4. Copy-paste: from here to done
 
 ```bash
-# R1. Fix the local DNS cache (one-time, on your Mac)
-sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+# B1 — platform (5 min). tfvars already has canadaeast/B1/app; backend.hcl exists.
+terraform -chdir=infra/platform init -backend-config=backend.hcl -reconfigure
+terraform -chdir=infra/platform apply        # type: yes
 
-# R2. Run the deploy (from the resume-app repo root)
+# B2 — staging DB (if not done): create touchpoint_staging on the MySQL server, then
+cd /Users/aliamin/Documents/Work/touchpoint
+DATABASE_URL="mysql://<user>:<pass>@<server>/touchpoint_staging" npm run db:push && cd -
+
+# C2 — the deploy (type "touchpoint-rwh" at the gate; smoke test exit 2 = expected)
 export OPERATOR_OBJECT_ID=$(az ad signed-in-user show --query id -o tsv)
 export BACKEND_CONFIG_ARGS="-backend-config=backend.hcl"
 infra/scripts/deploy.sh deploy /Users/aliamin/Documents/Work/touchpoint \
   --app-name touchpoint-rwh --env staging --staging-mode app
-# Type "touchpoint-rwh" at the gate. Smoke test WILL fail (exit 2) — empty
-# house, expected; the code arrives via CI in R4.
 
-# R3. Put the real MySQL URL in the app's vault (name printed by the script)
+# C3 — the secret (vault name is printed by the script)
 az keyvault secret set --vault-name kv-touchpoint-XXXXXXXX \
   --name database-url --value "mysql://<user>:<pass>@<server>/touchpoint_staging"
 
-# R4. Merge the PR (staging...chore/deployment-setup), then set repo secrets:
+# C4 — merge the PR to staging, then:
 gh secret set DATABASE_URL_STAGING --repo Recovery-With-Heart/touchpoint \
   --body "mysql://<user>:<pass>@<server>/touchpoint_staging"
-# (DATABASE_URL_PRODUCTION + AZURE_* org secrets: steps 8–9 of the table, when
-#  CI-to-prod is switched on — not needed for the staging playground)
 
-# R5. Verify
+# C5 — verify
 curl -I https://touchpoint-rwh-staging.azurewebsites.net
-# 503? restart once so the KV reference resolves:
-az webapp restart -g rg-ghr-platform -n touchpoint-rwh-staging
 ```
 
-**The staging link:** `https://touchpoint-rwh-staging.azurewebsites.net`
-(exists in App Service after R2 completes).
-
----
-
-## What runs where (hands-off map)
-
-| Thing | Who runs it | Where the secret lives |
-|---|---|---|
-| Build + migrate + deploy on merge to `staging`/`main` | GitHub Actions (repo workflow) | OIDC token in-memory only; DB URL in repo secrets |
-| App reads `DATABASE_URL` at runtime | Azure App Service | Key Vault reference → per-app vault, app identity can read ONLY its own vault |
-| Infra changes | `deploy.sh` (human-run, typed gate) | Terraform state in `stghrtfstate` (OIDC, blob lease locking) |
-| GitHub secrets, workflow values, branches | Human, by hand — **never scripted** | GitHub |
-
-## Troubleshooting
-
-- **T1 — `lookup stghrtfstate.blob.core.windows.net: no such host`:** your Mac's
-  DNS cache, not Azure. Run R1. (nslookup may succeed while macOS's own resolver
-  fails — trust `ping`, not `nslookup`, for this check.)
-- **T2 — smoke test exit 2 right after first deploy:** empty house, expected.
-  Code arrives via CI. If it persists after a successful CI deploy, read
-  `az webapp log tail -g rg-ghr-platform -n touchpoint-rwh-staging`.
-- **T3 — app runs but DB errors:** the KV secret value is wrong or the app
-  hasn't restarted since the secret was set (KV references are cached).
-- **T4 — `name already exists` at preflight:** app names are globally unique in
-  Azure. That's why this deployment is `touchpoint-rwh`, not `touchpoint`.
-- **T5 — CI migration step can't reach MySQL:** open "Allow public access from
-  any Azure service" on the MySQL server or allowlist GitHub runner IPs.
+If C2 hits the DNS error again: `sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder`, retry. Everything else is idempotent — re-running any step is safe.
