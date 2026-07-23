@@ -229,7 +229,7 @@ notify_slack() {
 
 cmd_deploy() {
   local source="" app_name="" env_target="prod" contract_arg="" assume_yes="false"
-  local staging_mode="${STAGING_MODE:-slot}" branch=""
+  local staging_mode="${STAGING_MODE:-slot}" branch="" create_production="true"
 
   # Temp artifacts (clone dir, plan file, tfvars dir) are globals so the EXIT
   # trap can clean them up on every exit path, including die (security audit L3).
@@ -243,6 +243,7 @@ cmd_deploy() {
       --app-name) app_name="$2"; shift 2 ;;
       --env) env_target="$2"; shift 2 ;;
       --staging-mode) staging_mode="$2"; shift 2 ;;
+      --no-prod) create_production="false"; shift ;;
       --branch) branch="$2"; shift 2 ;;
       --contract) contract_arg="$2"; shift 2 ;;
       --yes) assume_yes="true"; shift ;;
@@ -260,6 +261,9 @@ cmd_deploy() {
   [[ -n "$source" ]] || { usage; exit 1; }
   [[ "$env_target" == "staging" || "$env_target" == "prod" ]] || die "--env must be staging or prod"
   [[ "$staging_mode" == "slot" || "$staging_mode" == "app" ]] || die "--staging-mode must be slot or app"
+  if [[ "$create_production" == "false" && "$staging_mode" != "app" ]]; then
+    die "--no-prod requires --staging-mode app (a staging slot cannot exist without its production app)"
+  fi
 
   # Resolve source to a local directory (clone if it is a URL).
   work_dir=""
@@ -299,6 +303,20 @@ cmd_deploy() {
   local preflight_args=(--local-path "$repo_dir" --contract "$contract_file" --app-name "$app_name")
   if command -v az >/dev/null 2>&1; then
     preflight_args+=(--check-names)
+    # Re-deploys own the name already: if this app has a state blob, a "taken"
+    # name is ours and must not fail the check.
+    local sa container sa_key
+    sa="$(grep -E '^\s*storage_account_name' "${APP_DIR}/backend.hcl" 2>/dev/null | cut -d'"' -f2 || true)"
+    container="$(grep -E '^\s*container_name' "${APP_DIR}/backend.hcl" 2>/dev/null | cut -d'"' -f2 || true)"
+    if [[ -n "$sa" && -n "$container" ]]; then
+      sa_key="$(az storage account keys list --account-name "$sa" --query '[0].value' -o tsv 2>/dev/null || true)"
+    fi
+    if [[ -n "${sa_key:-}" ]] \
+      && az storage blob exists --account-name "$sa" --container-name "$container" \
+         --name "apps/${app_name}.tfstate" --auth-mode key --account-key "$sa_key" \
+         --query exists -o tsv 2>/dev/null | grep -q true; then
+      preflight_args+=(--existing)
+    fi
   fi
   if ! python3 "$PREFLIGHT" "${preflight_args[@]}"; then
     die "preflight failed; refusing to deploy"
@@ -332,6 +350,7 @@ cmd_deploy() {
     -var "location=${LOCATION}"
     -var "app_service_plan_id=${PLAN_ID}"
     -var "staging_mode=${staging_mode}"
+    -var "create_production=${create_production}"
   )
   if [[ -n "${OPERATOR_OBJECT_ID:-}" ]]; then
     tf_vars+=(-var "operator_object_id=${OPERATOR_OBJECT_ID}")

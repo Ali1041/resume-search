@@ -8,6 +8,7 @@ module "web_app" {
   runtime              = var.runtime
   runtime_version      = var.runtime_version
   staging_mode         = var.staging_mode
+  create_production    = var.create_production
   startup_command      = var.startup_command
   health_check_path    = var.health_check_path
   app_settings         = var.app_settings

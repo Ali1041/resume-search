@@ -36,7 +36,7 @@ locals {
   merged_app_settings = merge(
     var.app_settings,
     { SCM_DO_BUILD_DURING_DEPLOYMENT = "true" },
-    var.enable_app_insights ? { APPLICATIONINSIGHTS_CONNECTION_STRING = azurerm_application_insights.this[0].connection_string } : {},
+    var.enable_app_insights && var.create_production ? { APPLICATIONINSIGHTS_CONNECTION_STRING = azurerm_application_insights.this[0].connection_string } : {},
     local.kv_reference_settings
   )
 
@@ -74,10 +74,10 @@ resource "azurerm_key_vault" "this" {
 
 # Production web app identity can read ONLY this app's vault.
 resource "azurerm_role_assignment" "app_kv_secrets_user" {
-  count                = local.create_key_vault ? 1 : 0
+  count                = local.create_key_vault && var.create_production ? 1 : 0
   scope                = azurerm_key_vault.this[0].id
   role_definition_name = "Key Vault Secrets User"
-  principal_id         = azurerm_linux_web_app.this.identity[0].principal_id
+  principal_id         = azurerm_linux_web_app.this[0].identity[0].principal_id
 
   # Give AAD time to replicate the new principal before assigning (intermittent
   # PrincipalNotFound otherwise — code review finding 5).
@@ -116,8 +116,8 @@ resource "azurerm_role_assignment" "operator_kv_secrets_officer" {
 # plane access at all (review issue 1). Slots inherit from the parent site
 # scope, so one assignment covers the slot in "slot" mode.
 resource "azurerm_role_assignment" "deploy_sp_website_contributor" {
-  count                = var.deploy_sp_object_id != "" ? 1 : 0
-  scope                = azurerm_linux_web_app.this.id
+  count                = var.deploy_sp_object_id != "" && var.create_production ? 1 : 0
+  scope                = azurerm_linux_web_app.this[0].id
   role_definition_name = "Website Contributor"
   principal_id         = var.deploy_sp_object_id
 }
@@ -145,7 +145,7 @@ resource "azurerm_log_analytics_workspace" "this" {
 }
 
 resource "azurerm_application_insights" "this" {
-  count               = var.enable_app_insights ? 1 : 0
+  count               = var.enable_app_insights && var.create_production ? 1 : 0
   name                = "appi-${local.clean_app_name}"
   location            = var.location
   resource_group_name = var.resource_group_name
@@ -170,6 +170,7 @@ resource "azurerm_application_insights" "staging" {
 # Production web app.
 # -----------------------------------------------------------------------------
 resource "azurerm_linux_web_app" "this" {
+  count               = var.create_production ? 1 : 0
   name                = local.clean_app_name
   location            = var.location
   resource_group_name = var.resource_group_name
@@ -219,7 +220,7 @@ resource "azurerm_linux_web_app" "this" {
 resource "azurerm_linux_web_app_slot" "staging" {
   count          = local.create_slot ? 1 : 0
   name           = "staging"
-  app_service_id = azurerm_linux_web_app.this.id
+  app_service_id = azurerm_linux_web_app.this[0].id
 
   https_only = true
 

@@ -7,7 +7,7 @@ pattern discovered in production should be converted into a check here.
 
 Usage:
     preflight.py (--repo <git-url> | --local-path <dir>) \
-        [--contract <path>] [--app-name <name>] [--check-names]
+        [--contract <path>] [--app-name <name>] [--check-names] [--existing]
 
 Exit codes: 0 = PASS (warnings allowed), 1 = FAIL.
 """
@@ -150,7 +150,7 @@ def validate_with_schema(contract: Dict[str, Any], failures: List[str], warnings
         failures.append(f"schema violation at {path}: {error.message}")
 
 
-def check_name_availability(app_name: str, failures: List[str], warnings: List[str]) -> None:
+def check_name_availability(app_name: str, failures: List[str], warnings: List[str], existing_app: bool) -> None:
     az = shutil.which("az")
     if not az:
         warnings.append("az CLI not found; skipping Azure name availability check")
@@ -184,6 +184,12 @@ def check_name_availability(app_name: str, failures: List[str], warnings: List[s
         return
     if not result.get("nameAvailable", False):
         reason = result.get("message") or result.get("reason") or "unavailable"
+        if existing_app:
+            # Re-deploy of an app we already provisioned — the "taken" name is ours.
+            warnings.append(
+                f"web app name '{app_name}' is already in use (expected: this app is already deployed; re-deploying updates it)"
+            )
+            return
         failures.append(
             f"web app name '{app_name}' is not globally available on Azure ({reason}). "
             "Pick another --app-name, or use the hash-suffix fallback: "
@@ -191,7 +197,7 @@ def check_name_availability(app_name: str, failures: List[str], warnings: List[s
         )
 
 
-def run_checks(repo: Path, contract_path: Path, app_name: str, check_names: bool) -> Tuple[List[str], List[str]]:
+def run_checks(repo: Path, contract_path: Path, app_name: str, check_names: bool, existing_app: bool = False) -> Tuple[List[str], List[str]]:
     failures: List[str] = []
     warnings: List[str] = []
 
@@ -314,7 +320,7 @@ def run_checks(repo: Path, contract_path: Path, app_name: str, check_names: bool
 
     # 8. Optional Azure global name availability check.
     if check_names:
-        check_name_availability(app_name, failures, warnings)
+        check_name_availability(app_name, failures, warnings, existing_app)
 
     return failures, warnings
 
@@ -329,6 +335,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     source.add_argument("--local-path", help="local directory to validate")
     parser.add_argument("--contract", help="path to an azure-deploy.json (overrides <repo>/azure-deploy.json)")
     parser.add_argument("--app-name", help="web app name (default: derived from repo/path name)")
+    parser.add_argument(
+        "--existing",
+        action="store_true",
+        help="app is already deployed (state exists); a taken name becomes a warning instead of a failure",
+    )
     parser.add_argument(
         "--check-names",
         action="store_true",
@@ -360,7 +371,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     app_name = sanitize_name(args.app_name) if args.app_name else derive_app_name(args.repo or str(repo))
     contract_path = Path(args.contract).resolve() if args.contract else repo / "azure-deploy.json"
 
-    failures, warnings = run_checks(repo, contract_path, app_name, args.check_names)
+    failures, warnings = run_checks(repo, contract_path, app_name, args.check_names, args.existing)
 
     print("=" * 64)
     print("APP DEPLOYMENT PREFLIGHT")

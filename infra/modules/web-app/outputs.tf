@@ -1,6 +1,6 @@
 output "production_url" {
-  description = "HTTPS URL of the production web app."
-  value       = "https://${azurerm_linux_web_app.this.default_hostname}"
+  description = "HTTPS URL of the production web app, or null for staging-only deployments (create_production = false)."
+  value       = try("https://${azurerm_linux_web_app.this[0].default_hostname}", null)
 }
 
 output "staging_url" {
@@ -23,13 +23,13 @@ output "key_vault_uri" {
 }
 
 output "app_principal_id" {
-  description = "Object ID of the production web app's system-assigned identity."
-  value       = azurerm_linux_web_app.this.identity[0].principal_id
+  description = "Object ID of the production web app's system-assigned identity, or null when no production app exists."
+  value       = try(azurerm_linux_web_app.this[0].identity[0].principal_id, null)
 }
 
 output "web_app_name" {
-  description = "Name of the production web app."
-  value       = azurerm_linux_web_app.this.name
+  description = "Name of the production web app, or null when create_production = false."
+  value       = try(azurerm_linux_web_app.this[0].name, null)
 }
 
 output "staging_web_app_name" {

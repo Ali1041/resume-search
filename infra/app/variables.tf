@@ -46,6 +46,12 @@ variable "staging_mode" {
   }
 }
 
+variable "create_production" {
+  description = "Create the production web app. false = staging-only deployment (requires staging_mode \"app\")."
+  type        = bool
+  default     = true
+}
+
 variable "startup_command" {
   description = "Startup command; empty string = platform default."
   type        = string

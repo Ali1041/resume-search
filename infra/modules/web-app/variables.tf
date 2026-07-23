@@ -33,6 +33,17 @@ variable "runtime" {
   }
 }
 
+variable "create_production" {
+  description = "Whether to create the production web app. Set false for staging-only deployments of an app whose production already exists elsewhere. Requires staging_mode = \"app\" — a slot cannot exist without its parent app."
+  type        = bool
+  default     = true
+
+  validation {
+    condition     = var.create_production || var.staging_mode == "app"
+    error_message = "create_production=false requires staging_mode = \"app\": a staging slot lives ON the production app, so a staging-only deployment must use a separate staging app. Create ONLY what was requested."
+  }
+}
+
 variable "runtime_version" {
   description = "Runtime version. Empty string selects the default for the runtime (node: 20-lts, python: 3.11)."
   type        = string
