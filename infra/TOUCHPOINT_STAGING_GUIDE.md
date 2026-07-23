@@ -11,17 +11,40 @@ shared plan (~$13/mo), no slots.
 
 ---
 
-## 0. Current state after the reset (2026-07-20)
+## 0. Current state (2026-07-23 — nearly done)
 
 | Thing | State |
 |---|---|
-| `rg-ghr-platform` (B1 plan) | **DELETED** — nothing else was ever created (no apps, no vaults) |
-| tfstate storage (`stghrtfstate`) | **KEPT** — the name is globally reserved; the old state blob is inert (Terraform refresh self-heals; optionally delete the `platform.tfstate` blob once DNS is fixed) |
-| GitHub: `staging` branch + `chore/deployment-setup` PR on `Recovery-With-Heart/touchpoint` | **KEPT** (per your call) — PR: https://github.com/Recovery-With-Heart/touchpoint/compare/staging...chore/deployment-setup |
-| GitHub: infra code on `feature/ghr-deploy-automation` (resume-search) | **KEPT** |
-| Your Mac: terraform, `az login`, python3+`jsonschema`, git | **DONE** — no redo needed |
+| Platform (`rg-ghr-platform` + B1 plan, canadaeast, app mode) | **APPLIED** |
+| Staging app `touchpoint-rwh-staging.azurewebsites.net` | **DEPLOYED with `--no-prod`** (the unrequested pair-prod was destroyed per the "create only what was requested" rule) |
+| `touchpoint_staging` DB on `touchpoint-server` | **CREATED + all migrations applied** |
+| Secrets mode | **Env-var**: `DATABASE_URL` is a plain app setting (staging-only pattern); per-app Key Vault destroyed (soft-deleted, 90-day name hold) |
+| OIDC (Azure side) | **DONE**: `ghr-github-deploy` — APP_ID `4afaa68e-0ba3-4ea8-b404-d130d512d2e6`, SP object id `3207861b-515f-4529-8b9b-131991d15081`; federated creds for `staging` + `main`; Website Contributor on the staging app |
+| GitHub: `staging` branch + `chore/deployment-setup` PR | **KEPT** — PR: https://github.com/Recovery-With-Heart/touchpoint/compare/staging...chore/deployment-setup |
+| tfstate storage (`stghrtfstate`) | Kept |
+| MySQL firewall rule `ali-local-temp` (your current IP) | Added to run migrations from your Mac — delete later if unneeded |
 
-So the restart begins at **Phase B** below, not the very beginning.
+## Remaining — 3 manual GitHub steps (~10 min)
+
+```bash
+# R1. Org secrets (GitHub UI: Org → Settings → Secrets and variables → Actions):
+#   AZURE_CLIENT_ID       = 4afaa68e-0ba3-4ea8-b404-d130d512d2e6
+#   AZURE_TENANT_ID       = 3490d3c3-0a4c-4d0b-9ed1-0ca213d5866e
+#   AZURE_SUBSCRIPTION_ID = 795e869f-d45a-4377-8f5d-81b20ecd418a
+
+# R2. Repo secret for CI migrations (staging connection string):
+gh secret set DATABASE_URL_STAGING --repo Recovery-With-Heart/touchpoint \
+  --body "mysql://<user>:<password>@touchpoint-server.mysql.database.azure.com:3306/touchpoint_staging?ssl={\"rejectUnauthorized\":true}"
+
+# R3. Merge the PR (staging ← chore/deployment-setup)
+#     → CI builds → migrates touchpoint_staging → deploys →
+#     https://touchpoint-rwh-staging.azurewebsites.net goes live
+# R4. 503 after a green deploy? az webapp restart -g rg-ghr-platform -n touchpoint-rwh-staging
+```
+
+**Housekeeping:** the prod DB password was pasted in chat — rotate it in the
+MySQL server when convenient, then update the staging app setting +
+`DATABASE_URL_STAGING` with the new value.
 
 ---
 
