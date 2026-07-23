@@ -51,9 +51,22 @@ az storage container create -n tfstate --account-name stacmetfstate
 
 ### 2. OIDC + GitHub org secrets (manual, once per org — needed only for CI)
 
+Two DIFFERENT kinds of Azure access are easy to confuse:
+
+| Access | Who uses it | How it exists |
+|---|---|---|
+| **Operator access** — your user account on the subscription | You, running Terraform/`az` from your Mac | Usually already true (you can see the sub in the portal) |
+| **CI access** — an Entra app registration (service principal) + federated credential | GitHub Actions, deploying on merge | **Must be created per org** — this is the OIDC setup |
+
+Seeing the org/repos in the Azure portal (e.g. via an old Deployment Center
+OAuth link) is NEITHER of these being "done" for CI. Verify with:
+`az ad app list --display-name <org>-github-deploy` — empty result = not done.
+
 - Create the deploy app registration + federated credential trusting
   `repo:<their-org>/<repo>:ref:refs/heads/main` (README §2.2 — verify the
   repo's `sub` claim format first; prefer per-repo credentials over wildcards).
+  **One app registration can serve many orgs** — just add one federated
+  credential per org/repo to the same registration.
 - Set the org secrets `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` /
   `AZURE_SUBSCRIPTION_ID`. Every repo in their org inherits them.
 - Give the SP **no RG-level role**. Each app deployment grants it Website
@@ -83,6 +96,10 @@ For **each new app** in the org — this is the only per-app work:
    infra/scripts/deploy.sh deploy https://github.com/<org>/<repo> \
      --app-name <org>-<app> --env staging --staging-mode app
    ```
+   **Create ONLY what was requested.** The default is a prod+staging pair. If
+   the ask is "staging for an app whose prod already exists", add `--no-prod`
+   (requires `--staging-mode app`). Never leave an unrequested resource
+   running because the script defaults made it.
    Naming convention: prefix app names with the org (`acme-timesheet`) — app
    names are globally unique across Azure.
 4. **Secrets (manual):** `az keyvault secret set` for the app's vault; repo
