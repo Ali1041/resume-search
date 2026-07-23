@@ -88,24 +88,45 @@ zero-downtime promotion. Recommendation: **Scenario A** (see §8).
 
 ## 2. One-time setup
 
-### 2.1 Terraform state storage
+### 2.1 Terraform state storage (do this FIRST — before any `terraform init`)
 
-State lives in Azure Storage. The azurerm backend acquires a **blob lease** on
-the state file for every state-writing operation, so locking is automatic —
-no lock table to create (true for azurerm provider/backend ~> 4.x).
+**Why this exists:** Terraform keeps a "memory" of everything it created — the
+state file. Without it, Terraform forgets what it manages and cannot safely
+update or destroy anything. That file lives in one Azure Storage account that
+**you create once, by hand, before anything else works.**
+
+**Why its own resource group (`rg-ghr-tfstate`) instead of an existing one:**
+the state storage must **outlive every app**. `deploy.sh destroy` and app-RG
+cleanups come and go; if the state storage is deleted, Terraform forgets every
+app at once and you lose clean update/destroy for the whole platform. A
+dedicated RG makes it visibly untouchable. One storage account (~$0.50/month)
+holds the state for **every app, forever** — nothing here repeats per app.
+
+**If you skip this step**, `terraform init` fails with:
+`Error: retrieving Storage Account ... 404 ResourceGroupNotFound` — that error
+means "come do §2.1", nothing is broken.
 
 ```bash
 az login
 az account set --subscription "<subscription>"
 
-az group create --name rg-ghr-tfstate --location canadacentral
+# One-time, ever. Use the SAME region as your platform (canadaeast for GHR).
+az group create --name rg-ghr-tfstate --location canadaeast
 az storage account create --name stghrtfstate --resource-group rg-ghr-tfstate \
-  --location canadacentral --sku Standard_LRS --min-tls-version TLS1_2
-az storage container create --name tfstate --account-name stghrtfstate
+  --location canadaeast --sku Standard_LRS --min-tls-version TLS1_2 \
+  --allow-blob-public-access false
+az storage container create --name tfstate --account-name stghrtfstate --auth-mode login
 # Recommended: blob versioning for state recovery
 az storage account blob-service-properties update --account-name stghrtfstate \
   --enable-versioning true
 ```
+
+(The storage account name must be globally unique across Azure. If
+`stghrtfstate` is ever taken, pick another and update `backend.hcl` to match.)
+
+State locking is automatic: the azurerm backend acquires a **blob lease** on
+the state file for every state-writing operation — no lock table to create
+(true for azurerm provider/backend ~> 4.x).
 
 ### 2.2 OIDC app registration (GitHub Actions → Azure, no stored secrets)
 
@@ -184,12 +205,22 @@ export BACKEND_CONFIG_ARGS="-backend-config=backend.hcl"
 ## 3. Per-app workflow (both scenarios)
 
 ```bash
-# 0. App repo contains azure-deploy.json (+ template files from infra/templates/app-repo/)
+# 0. FIRST, IN THE APP REPO (one time, committed to git): the repo carries its
+#    own deployment contract + CI. This is the design, not an optional extra —
+#    deploy.sh reads azure-deploy.json from the repo ROOT by default.
+cd <app-repo>
+cp <infra>/templates/app-repo/azure-deploy.json ./azure-deploy.json   # edit: runtime, startup, kv_secrets, db_migration_command
+cp <infra>/templates/app-repo/CLAUDE.md ./CLAUDE.md
+mkdir -p .github/workflows && cp <infra>/templates/app-repo/.github/workflows/deploy.yml ./.github/workflows/
+#    (edit deploy.yml env: AZURE_WEBAPP_NAME / STAGING_MODE / RUNTIME / DB_MIGRATION_COMMAND)
+git checkout -b chore/deployment-setup && git add -A && git commit -m "chore: deployment contract + CI" && git push -u origin HEAD
+#    merge the PR, then: git checkout -b staging && git push -u origin staging
 
 # 1. Preflight (standalone, optional — deploy.sh runs it anyway)
 python3 infra/scripts/preflight.py --repo https://github.com/<org>/<repo> --check-names
 
 # 2. Deploy (preflight -> plan -> HUMAN GATE -> apply -> smoke test -> URL)
+#    Note: NO --contract flag in the normal flow — the contract comes from the repo.
 export OPERATOR_OBJECT_ID="<ali-aad-object-id>"        # Key Vault Secrets Officer
 export DEPLOY_SP_OBJECT_ID="<github-actions-sp-object-id>"  # Website Contributor
 export STAGING_MODE=slot                                # or app — MUST match the platform tfvars
@@ -197,6 +228,7 @@ infra/scripts/deploy.sh deploy https://github.com/<org>/<repo> --app-name <name>
 
 # deploy.sh stops and asks you to TYPE THE APP NAME before applying. No auto-approve.
 # Afterwards it curls the health endpoint (6 attempts, 30s apart) and prints URLs.
+# (--contract <path> exists ONLY as a testing shortcut when the repo has no contract yet.)
 ```
 
 - Slot mode: staging URL is `https://<app>-staging.azurewebsites.net` (the slot).
