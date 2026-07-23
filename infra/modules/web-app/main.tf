@@ -178,10 +178,11 @@ resource "azurerm_linux_web_app" "this" {
   }
 
   site_config {
-    minimum_tls_version = "1.2"
-    always_on           = true
-    health_check_path   = var.health_check_path
-    app_command_line    = var.startup_command != "" ? var.startup_command : null
+    minimum_tls_version               = "1.2"
+    always_on                         = true
+    health_check_path                 = var.health_check_path
+    health_check_eviction_time_in_min = 2
+    app_command_line                  = var.startup_command != "" ? var.startup_command : null
 
     application_stack {
       node_version   = var.runtime == "node" ? local.effective_runtime_version : null
@@ -222,10 +223,11 @@ resource "azurerm_linux_web_app_slot" "staging" {
   }
 
   site_config {
-    minimum_tls_version = "1.2"
-    always_on           = true
-    health_check_path   = var.health_check_path
-    app_command_line    = var.startup_command != "" ? var.startup_command : null
+    minimum_tls_version               = "1.2"
+    always_on                         = true
+    health_check_path                 = var.health_check_path
+    health_check_eviction_time_in_min = 2
+    app_command_line                  = var.startup_command != "" ? var.startup_command : null
 
     application_stack {
       node_version   = var.runtime == "node" ? local.effective_runtime_version : null
@@ -260,10 +262,11 @@ resource "azurerm_linux_web_app" "staging" {
   }
 
   site_config {
-    minimum_tls_version = "1.2"
-    always_on           = true
-    health_check_path   = var.health_check_path
-    app_command_line    = var.startup_command != "" ? var.startup_command : null
+    minimum_tls_version               = "1.2"
+    always_on                         = true
+    health_check_path                 = var.health_check_path
+    health_check_eviction_time_in_min = 2
+    app_command_line                  = var.startup_command != "" ? var.startup_command : null
 
     application_stack {
       node_version   = var.runtime == "node" ? local.effective_runtime_version : null
