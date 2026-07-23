@@ -335,6 +335,43 @@ can't use Key Vault references.
 
 ---
 
+## 4.5 Databases — the manual process (always)
+
+**Automation never creates, migrates unsupervised, or destroys databases.** A
+web app is disposable; a database is not. Every app gets its databases by hand,
+one per environment, and CI only *runs migrations* against them.
+
+**One-time per environment (example: Touchpoint staging on Azure MySQL Flexible Server):**
+
+```bash
+# 1. Create the database ON the existing server (no new server needed)
+az mysql flexible-server db create \
+  --resource-group <rg-of-the-server> \
+  --server-name touchpoint-server \
+  --database-name touchpoint_staging
+
+# 2. Apply the schema from the app repo (drizzle example)
+cd <app-repo>
+DATABASE_URL="mysql://<user>:<password>@touchpoint-server.mysql.database.azure.com/touchpoint_staging" npm run db:push
+```
+
+Facts to know:
+- **FQDN pattern:** `<server>.mysql.database.azure.com` (Flexible Server).
+- **Firewall:** your client IP must be allowed on the server for step 2, and
+  GitHub-hosted runners need access for CI migrations ("Allow public access
+  from any Azure service" or runner IP allowlist).
+- **Naming:** `<app>_staging` / `<app>` (or `<app>_prod`) — one database per
+  environment, never shared. Staging pointing at the prod DB is the one
+  unforgivable mistake in this system.
+- **After creation:** the connection string goes to the app via the contract
+  (env-var mode: `app_settings`; vault mode: `az keyvault secret set`, §4) and
+  to CI via repo secrets (§3.1). The string itself never enters Terraform or
+  git.
+- **Schema changes after that:** automatic — `db_migration_command` runs in CI
+  on every merge (expand/contract, forward-only).
+
+---
+
 ## 5. Rollback / destroy
 
 ```bash
@@ -460,6 +497,14 @@ Everything on this page has bitten someone at least once.
 10. **Run it from anywhere** — paths resolve relative to the script location.
     You need network access to Azure (and GitHub if cloning, not using a local
     path).
+11. **Create ONLY what was requested (hard rule).** deploy.sh creates a
+    prod+staging pair BY DEFAULT because that's the normal new-app case. If the
+    app already has a production elsewhere and you were asked for STAGING ONLY,
+    you must pass `--no-prod` (requires `--staging-mode app`):
+    `deploy.sh deploy <repo> --app-name <app> --env staging --staging-mode app --no-prod`.
+    Never leave an unrequested resource running "because the script made it" —
+    that mistake happened once (an idle prod app), was destroyed the same day,
+    and is why this flag exists.
 
 ---
 
@@ -467,9 +512,15 @@ Everything on this page has bitten someone at least once.
 
 ```
 deploy.sh deploy <git-url-or-local-path> [--app-name NAME] [--env staging|prod]
-                 [--staging-mode slot|app] [--contract PATH] [--branch NAME] [--yes]
+                 [--staging-mode slot|app] [--contract PATH] [--branch NAME]
+                 [--no-prod] [--yes]
 deploy.sh destroy <app-name>
 ```
+
+`--no-prod`: staging-only deployment (no production app/slot/AI is created or
+kept). Requires `--staging-mode app`. Re-running an existing deployment with it
+DESTROYS the production app (plan shows the destroys; the typed gate still
+applies).
 
 Environment: `STAGING_MODE`, `BACKEND_CONFIG_ARGS`, `OPERATOR_OBJECT_ID`,
 `DEPLOY_SP_OBJECT_ID`, `SLACK_WEBHOOK_URL` (posts the final URL),

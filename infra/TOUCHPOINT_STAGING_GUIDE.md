@@ -82,6 +82,7 @@ So the restart begins at **Phase B** below, not the very beginning.
 | 8 | Contract said Node **20**; Touchpoint's CI builds on **22** | Version drift | Contract + workflow set to 22 |
 | 9 | Repo file is `claude.md` (lowercase) — my first commit missed it (case) | One extra commit | Stage exact paths; macOS FS is case-insensitive, git is not |
 | 10 | **My communication**: too much debugging noise, answers buried | Your patience | Guides now lead with the answer, details after |
+| 11 | **The script created an unrequested PRODUCTION app** alongside staging (pair-always default) — you asked for staging only | An idle prod app until destroyed the same day | Hard rule: create ONLY what was requested. `--no-prod` flag added (requires app mode); README §9 rule 11; re-running with it destroyed the stray prod app |
 
 ---
 
