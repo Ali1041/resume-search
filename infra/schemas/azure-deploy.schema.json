@@ -46,7 +46,7 @@
       "pattern": "^/"
     },
     "app_settings": {
-      "description": "Non-secret environment variables. NEVER put secrets here.",
+      "description": "Environment variables as plaintext values. May hold a secret for STAGING/DEV (e.g. DATABASE_URL) — visible in the Azure portal and Terraform state. Production secrets must use kv_secrets instead.",
       "type": "object",
       "additionalProperties": {
         "type": "string"
@@ -56,7 +56,7 @@
       }
     },
     "kv_secrets": {
-      "description": "Map of APP_SETTING_NAME => Key Vault secret name. A human must pre-create each secret in the app's Key Vault (az keyvault secret set); Terraform only wires the Key Vault reference.",
+      "description": "Map of APP_SETTING_NAME => Key Vault secret name (production secret mode). A human must pre-create each secret in the app's Key Vault (az keyvault secret set); Terraform wires the Key Vault reference. When empty/absent, no vault is created and secrets (if any) come from app_settings (staging/dev only).",
       "type": "object",
       "additionalProperties": {
         "type": "string",

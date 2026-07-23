@@ -13,13 +13,13 @@ output "staging_url" {
 }
 
 output "key_vault_name" {
-  description = "Name of this app's Key Vault."
-  value       = azurerm_key_vault.this.name
+  description = "Name of this app's Key Vault, or null when the contract declares no kv_secrets (plain env-var mode)."
+  value       = try(azurerm_key_vault.this[0].name, null)
 }
 
 output "key_vault_uri" {
-  description = "URI of this app's Key Vault (used in Key Vault references)."
-  value       = azurerm_key_vault.this.vault_uri
+  description = "URI of this app's Key Vault (used in Key Vault references), or null in env-var mode."
+  value       = try(azurerm_key_vault.this[0].vault_uri, null)
 }
 
 output "app_principal_id" {

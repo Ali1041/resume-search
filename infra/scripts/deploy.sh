@@ -392,7 +392,11 @@ cmd_deploy() {
   echo "deploy complete"
   echo "  production: $production_url"
   echo "  staging:    $staging_url"
-  echo "  key vault:  $kv_name  (set secrets with: az keyvault secret set --vault-name $kv_name --name <secret> --value <value>)"
+  if [[ -n "$kv_name" && "$kv_name" != "null" ]]; then
+    echo "  key vault:  $kv_name  (set secrets with: az keyvault secret set --vault-name $kv_name --name <secret> --value <value>)"
+  else
+    echo "  key vault:  none (env-var mode — no kv_secrets declared)"
+  fi
   if [[ -n "${SLACK_WEBHOOK_URL:-}" ]]; then
     notify_slack "Deploy complete: ${app_name} -> ${target_url}"
   fi

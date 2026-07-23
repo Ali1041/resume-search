@@ -21,11 +21,16 @@ locals {
   create_staging_app = var.staging_mode == "app"
   create_staging     = local.create_slot || local.create_staging_app
 
+  # The per-app Key Vault is OPTIONAL: it only exists when the contract declares
+  # kv_secrets. Apps may instead put a value directly in app_settings (plain
+  # env var — acceptable for staging/dev, warned against for production).
+  create_key_vault = length(var.kv_secret_references) > 0
+
   # Build strategy (review R5): Oryx remote build via SCM_DO_BUILD_DURING_DEPLOYMENT.
   # WEBSITE_RUN_FROM_PACKAGE is intentionally NOT set — pick one strategy, not both.
   kv_reference_settings = {
     for setting_name, secret_name in var.kv_secret_references :
-    setting_name => "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.this.vault_uri}secrets/${secret_name})"
+    setting_name => "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.this[0].vault_uri}secrets/${secret_name})"
   }
 
   merged_app_settings = merge(
@@ -47,11 +52,13 @@ locals {
 
 # -----------------------------------------------------------------------------
 # Per-app Key Vault (review issues 1 & 6: no shared vault, no access policies —
-# Azure RBAC only, least privilege, per-app blast radius).
+# Azure RBAC only, least privilege, per-app blast radius). OPTIONAL: created
+# only when the contract declares kv_secrets (local.create_key_vault).
 # Terraform never creates secrets. Humans set them:
 #   az keyvault secret set --vault-name <kv> --name <secret> --value <value>
 # -----------------------------------------------------------------------------
 resource "azurerm_key_vault" "this" {
+  count                      = local.create_key_vault ? 1 : 0
   name                       = local.kv_name
   location                   = var.location
   resource_group_name        = var.resource_group_name
@@ -67,7 +74,8 @@ resource "azurerm_key_vault" "this" {
 
 # Production web app identity can read ONLY this app's vault.
 resource "azurerm_role_assignment" "app_kv_secrets_user" {
-  scope                = azurerm_key_vault.this.id
+  count                = local.create_key_vault ? 1 : 0
+  scope                = azurerm_key_vault.this[0].id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_linux_web_app.this.identity[0].principal_id
 
@@ -79,8 +87,8 @@ resource "azurerm_role_assignment" "app_kv_secrets_user" {
 # The staging slot has its own system-assigned identity; it needs the same read
 # access because slot app_settings contain the same Key Vault references.
 resource "azurerm_role_assignment" "slot_kv_secrets_user" {
-  count                = local.create_slot ? 1 : 0
-  scope                = azurerm_key_vault.this.id
+  count                = local.create_slot && local.create_key_vault ? 1 : 0
+  scope                = azurerm_key_vault.this[0].id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_linux_web_app_slot.staging[0].identity[0].principal_id
 
@@ -88,8 +96,8 @@ resource "azurerm_role_assignment" "slot_kv_secrets_user" {
 }
 
 resource "azurerm_role_assignment" "staging_app_kv_secrets_user" {
-  count                = local.create_staging_app ? 1 : 0
-  scope                = azurerm_key_vault.this.id
+  count                = local.create_staging_app && local.create_key_vault ? 1 : 0
+  scope                = azurerm_key_vault.this[0].id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_linux_web_app.staging[0].identity[0].principal_id
 
@@ -98,8 +106,8 @@ resource "azurerm_role_assignment" "staging_app_kv_secrets_user" {
 
 # Human operator manages secrets (set/list/delete) on this app's vault only.
 resource "azurerm_role_assignment" "operator_kv_secrets_officer" {
-  count                = var.operator_object_id != "" ? 1 : 0
-  scope                = azurerm_key_vault.this.id
+  count                = var.operator_object_id != "" && local.create_key_vault ? 1 : 0
+  scope                = azurerm_key_vault.this[0].id
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = var.operator_object_id
 }

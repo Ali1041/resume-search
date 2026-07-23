@@ -286,8 +286,27 @@ feature/<name>  --PR-->  staging  --verify on staging URL--PR-->  main
 
 ## 4. Secrets runbook
 
-Terraform creates the vault and the RBAC; **secrets are never created by
-Terraform.** Humans set them, once per app:
+Two supported ways to give an app its secrets. **Pick per environment:**
+
+### Option A — plain environment variables (staging/dev)
+
+Put the value straight into the contract's `app_settings`:
+
+```json
+"app_settings": { "DATABASE_URL": "mysql://user:pass@server/app_staging" }
+```
+
+- Simplest: nothing else to do. No vault is even created (the module skips it
+  when `kv_secrets` is empty).
+- **The trade-off:** the value is visible in the Azure portal app settings and
+  in Terraform state to anyone with access. Fine for staging/dev databases and
+  throwaway credentials — **not acceptable for production.**
+- Preflight allows it for database apps but prints the plaintext warning.
+
+### Option B — Azure Key Vault (production, the default)
+
+Terraform creates the vault and the RBAC (only when `kv_secrets` is declared);
+**secrets are never created by Terraform.** Humans set them, once per app:
 
 ```bash
 KV=$(terraform -chdir=infra/app output -raw key_vault_name)   # per-app vault, e.g. kv-myapp-a1b2
@@ -301,7 +320,7 @@ The app declares the mapping in `azure-deploy.json`:
 Terraform then injects `DATABASE_URL=@Microsoft.KeyVault(SecretUri=https://<own-vault>/secrets/database-url)`
 into app settings. Each app's managed identity can read ONLY its own vault.
 
-**Caveats that bite people:**
+**Caveats that bite people (vault mode):**
 - **KV references are cached.** After rotating a secret, RESTART the app (or
   touch an app setting) or it keeps the old value:
   `az webapp restart --name <app> --resource-group rg-ghr-platform`
@@ -309,6 +328,10 @@ into app settings. Each app's managed identity can read ONLY its own vault.
   app receives the literal reference string. The smoke test is the backstop.
 - Slot mode: if a secret value must differ per slot (e.g. staging DB vs prod DB),
   the setting name goes in `slot_sticky_setting_names` so it doesn't swap.
+
+**Either way, CI migrations** still need `DATABASE_URL_STAGING` /
+`DATABASE_URL_PRODUCTION` as GitHub repo secrets (§3.1) — the migration runner
+can't use Key Vault references.
 
 ---
 

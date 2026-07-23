@@ -258,17 +258,27 @@ def run_checks(repo: Path, contract_path: Path, app_name: str, check_names: bool
                 "for v1. Route this app to a human operator."
             )
 
-    # 5. Database markers require declared Key Vault secrets.
+    # 5. Database markers require the connection string to be declared one of
+    # two ways: kv_secrets (Key Vault reference — required for production) or a
+    # plain DATABASE_URL in app_settings (env-var mode — staging/dev only).
     db_markers = find_db_markers(repo, py_deps)
     kv_secrets = contract.get("kv_secrets") or {}
-    if db_markers and not kv_secrets:
+    app_settings_for_db = contract.get("app_settings") or {}
+    has_plain_db_url = "DATABASE_URL" in app_settings_for_db
+    if db_markers and not kv_secrets and not has_plain_db_url:
         failures.append(
-            f"database detected ({', '.join(db_markers)}) but no Key Vault secret declared: "
-            "add a kv_secrets entry (e.g. \"DATABASE_URL\": \"database-url\") to "
-            "azure-deploy.json and ask the operator to create the secret with "
-            "'az keyvault secret set' before deploying."
+            f"database detected ({', '.join(db_markers)}) but no connection string declared: "
+            "either add kv_secrets (e.g. \"DATABASE_URL\": \"database-url\" — vault mode, "
+            "required for production) or set DATABASE_URL in app_settings (env-var mode, "
+            "staging/dev only)."
         )
-    if db_markers and kv_secrets and not contract.get("db_migration_command"):
+    if db_markers and has_plain_db_url and not kv_secrets:
+        warnings.append(
+            "DATABASE_URL is a PLAIN app_settings value (visible in the Azure portal and "
+            "Terraform state to anyone with access). Acceptable for staging/dev; production "
+            "apps must use kv_secrets (Key Vault reference) instead."
+        )
+    if db_markers and (kv_secrets or has_plain_db_url) and not contract.get("db_migration_command"):
         warnings.append(
             "database detected but no db_migration_command in contract: schema changes "
             "will NOT run automatically in CI. Add e.g. \"db_migration_command\": "
