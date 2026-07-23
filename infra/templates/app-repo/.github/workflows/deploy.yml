@@ -1,5 +1,5 @@
 # =============================================================================
-# GHR app deployment workflow
+# App deployment workflow (generated from the platform template)
 #
 # OIDC CONFIGURATION (read before enabling):
 #   This workflow authenticates to Azure with OIDC federated credentials —

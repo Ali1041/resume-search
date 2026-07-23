@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preflight validator for GHR app deployments.
+"""Preflight validator for platform app deployments.
 
 Validates a candidate app repo against the azure-deploy.json contract and the
 structural rules of the platform BEFORE any Terraform runs. Every failure
@@ -311,7 +311,7 @@ def run_checks(repo: Path, contract_path: Path, app_name: str, check_names: bool
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="GHR deployment preflight validator",
+        description="app deployment preflight validator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     source = parser.add_mutually_exclusive_group(required=True)
@@ -353,7 +353,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     failures, warnings = run_checks(repo, contract_path, app_name, args.check_names)
 
     print("=" * 64)
-    print("GHR DEPLOYMENT PREFLIGHT")
+    print("APP DEPLOYMENT PREFLIGHT")
     print(f"  source:    {source_desc}")
     print(f"  app name:  {app_name}")
     print(f"  contract:  {contract_path}")

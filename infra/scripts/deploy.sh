@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# deploy.sh — the GHR deployment wrapper. The ONLY apply path in v1.
+# deploy.sh — the app deployment wrapper. The ONLY apply path in v1.
 #
 #   deploy.sh deploy <git-url-or-local-path> [--app-name NAME] [--env staging|prod]
 #                    [--staging-mode slot|app] [--contract PATH] [--branch NAME] [--yes]
@@ -140,6 +140,38 @@ resolve_platform() {
   PLAN_ID="${PLAN_ID:-${PLATFORM_APP_SERVICE_PLAN_ID:-}}"
   if [[ -z "$RG_NAME" || -z "$PLAN_ID" ]]; then
     die "could not resolve platform outputs. Run the platform root first (infra/platform) or set PLATFORM_RESOURCE_GROUP_NAME and PLATFORM_APP_SERVICE_PLAN_ID."
+  fi
+}
+
+# check_backend_storage — friendly pre-flight for the tfstate backend. Without
+# this, a missing state storage account surfaces as a raw Azure
+# "404 ResourceGroupNotFound" from terraform init; fail early with the fix
+# instead (README §2.1). Skips silently when az is unavailable/unauthed.
+check_backend_storage() {
+  command -v az >/dev/null 2>&1 || return 0
+  az account show >/dev/null 2>&1 || return 0
+  local sa_name="" rg_name="" arg hcl_path
+  for arg in "$@"; do
+    case "$arg" in
+      -backend-config=storage_account_name=*) sa_name="${arg#-backend-config=storage_account_name=}" ;;
+      -backend-config=resource_group_name=*) rg_name="${arg#-backend-config=resource_group_name=}" ;;
+      -backend-config=*.hcl)
+        hcl_path="${arg#-backend-config=}"
+        [[ -f "$hcl_path" ]] || hcl_path="${APP_DIR}/${hcl_path}"
+        if [[ -f "$hcl_path" ]]; then
+          sa_name="$(sed -nE 's/^[[:space:]]*storage_account_name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$hcl_path" | head -1)"
+          rg_name="$(sed -nE 's/^[[:space:]]*resource_group_name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$hcl_path" | head -1)"
+        fi
+        ;;
+    esac
+  done
+  [[ -n "$sa_name" ]] || return 0
+  if ! az storage account show --name "$sa_name" ${rg_name:+--resource-group "$rg_name"} >/dev/null 2>&1; then
+    die "terraform state storage account '${sa_name}' does not exist yet. Create it ONCE (README §2.1):
+  az group create --name ${rg_name:-rg-ghr-tfstate} --location canadaeast
+  az storage account create --name ${sa_name} --resource-group ${rg_name:-rg-ghr-tfstate} --location canadaeast --sku Standard_LRS --min-tls-version TLS1_2 --allow-blob-public-access false
+  az storage container create --name tfstate --account-name ${sa_name} --auth-mode login
+Then re-run this command."
   fi
 }
 
@@ -317,6 +349,7 @@ cmd_deploy() {
 
   # 4. Plan (plan file kept out of the repo tree).
   plan_file="$(mktemp -t "tfplan-${app_name}")"
+  check_backend_storage "${backend_args[@]}"
   terraform -chdir="$APP_DIR" init -input=false -reconfigure "${backend_args[@]}"
   terraform -chdir="$APP_DIR" plan -input=false -out="$plan_file" "${tf_vars[@]}"
 
@@ -361,7 +394,7 @@ cmd_deploy() {
   echo "  staging:    $staging_url"
   echo "  key vault:  $kv_name  (set secrets with: az keyvault secret set --vault-name $kv_name --name <secret> --value <value>)"
   if [[ -n "${SLACK_WEBHOOK_URL:-}" ]]; then
-    notify_slack "GHR deploy complete: ${app_name} -> ${target_url}"
+    notify_slack "Deploy complete: ${app_name} -> ${target_url}"
   fi
 }
 
@@ -397,6 +430,7 @@ cmd_destroy() {
     backend_args+=("${extra_backend_args[@]}")
   fi
 
+  check_backend_storage "${backend_args[@]}"
   terraform -chdir="$target_dir" init -input=false -reconfigure "${backend_args[@]}"
   # Variable values are irrelevant to destroy (it acts on state), but required
   # variables must still be given; runtime=node is a neutral placeholder.

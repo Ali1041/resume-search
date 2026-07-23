@@ -1,6 +1,6 @@
 # REGISTER.md — Getting a new app deployed
 
-This is how a GHR app goes from "code on my machine" to "URL in the browser".
+This is how an app goes from "code on my machine" to "URL in the browser".
 
 ## The boundary: simple apps only
 
@@ -35,14 +35,14 @@ Key Vault (see below).
    Also set `db_migration_command` (e.g. `"npm run db:push"`) so schema changes
    apply automatically on every merge.
 
-4. **Create the repo in the GHR GitHub org**, create a `staging` branch, and
+4. **Create the repo in your organization's GitHub org**, create a `staging` branch, and
    push your code. Branches map to environments:
    - merge into `staging` → deploys the staging app/slot + migrates the staging DB
    - merge into `main` → deploys the production app + migrates the production DB
 
 5. **Send the repo URL to the operator (Ali).** He runs:
    ```
-   infra/scripts/deploy.sh deploy https://github.com/GHR-ORG/your-app
+   infra/scripts/deploy.sh deploy https://github.com/<org>/your-app
    ```
    Preflight validates the repo, Terraform plans the resources, Ali confirms,
    the app is deployed, and a smoke test checks the health endpoint.

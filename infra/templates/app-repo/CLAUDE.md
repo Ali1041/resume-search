@@ -1,6 +1,6 @@
 # CLAUDE.md — Working in this repo
 
-This app deploys to Azure App Service through GHR's deployment automation.
+This app deploys to Azure App Service through the platform's deployment automation.
 Keep this file short and follow it exactly.
 
 ## Git flow: branches map to environments

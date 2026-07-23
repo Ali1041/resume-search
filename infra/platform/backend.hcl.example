@@ -2,6 +2,10 @@
 # Copy to backend.hcl, fill in the values, then:
 #   terraform init -backend-config=backend.hcl
 #
+# PREREQUISITE: the storage account below must ALREADY exist (create it once,
+# by hand — see README §2.1). If `terraform init` fails with
+# "404 ResourceGroupNotFound", you haven't done that step yet.
+#
 # The azurerm backend acquires a blob lease on the state file for every
 # operation that writes state, so concurrent applies are serialized
 # automatically. No separate lock table is required for provider ~> 4.0.
