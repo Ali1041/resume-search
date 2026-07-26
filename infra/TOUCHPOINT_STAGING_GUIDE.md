@@ -24,22 +24,26 @@ shared plan (~$13/mo), no slots.
 | tfstate storage (`stghrtfstate`) | Kept |
 | MySQL firewall rule `ali-local-temp` (your current IP) | Added to run migrations from your Mac — delete later if unneeded |
 
-## Remaining — 3 manual GitHub steps (~10 min)
+## Remaining — 3 manual GitHub steps (~10 min, ALL repo-level)
+
+Secrets are set at REPO level (repo → Settings → Secrets and variables →
+Actions → New repository secret) — chosen over org-level for tighter scoping;
+the OIDC federated credential is already per-repo.
 
 ```bash
-# R1. Org secrets (GitHub UI: Org → Settings → Secrets and variables → Actions):
+# R1. Repository secrets on Recovery-With-Heart/touchpoint:
 #   AZURE_CLIENT_ID       = 4afaa68e-0ba3-4ea8-b404-d130d512d2e6
 #   AZURE_TENANT_ID       = 3490d3c3-0a4c-4d0b-9ed1-0ca213d5866e
 #   AZURE_SUBSCRIPTION_ID = 795e869f-d45a-4377-8f5d-81b20ecd418a
+#   DATABASE_URL_STAGING  = mysql://<user>:<password>@touchpoint-server.mysql.database.azure.com:3306/touchpoint_staging?ssl={"rejectUnauthorized":true}
 
-# R2. Repo secret for CI migrations (staging connection string):
-gh secret set DATABASE_URL_STAGING --repo Recovery-With-Heart/touchpoint \
-  --body "mysql://<user>:<password>@touchpoint-server.mysql.database.azure.com:3306/touchpoint_staging?ssl={\"rejectUnauthorized\":true}"
+# R2. Merge the PR (staging ← chore/deployment-setup):
+#     https://github.com/Recovery-With-Heart/touchpoint/compare/staging...chore/deployment-setup
+#     The merge IS a push to staging → triggers the deploy workflow automatically.
 
-# R3. Merge the PR (staging ← chore/deployment-setup)
-#     → CI builds → migrates touchpoint_staging → deploys →
-#     https://touchpoint-rwh-staging.azurewebsites.net goes live
-# R4. 503 after a green deploy? az webapp restart -g rg-ghr-platform -n touchpoint-rwh-staging
+# R3. Watch repo → Actions (build → migrate → deploy, ~4-6 min), then:
+curl -I https://touchpoint-rwh-staging.azurewebsites.net
+# 503 after green? az webapp restart -g rg-ghr-platform -n touchpoint-rwh-staging
 ```
 
 **Housekeeping:** the prod DB password was pasted in chat — rotate it in the
