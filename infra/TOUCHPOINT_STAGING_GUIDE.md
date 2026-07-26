@@ -52,6 +52,36 @@ MySQL server when convenient, then update the staging app setting +
 
 ---
 
+## Prod cutover checklist (staging → main, when ready)
+
+The staging environment was deliberately built staging-only (`--no-prod`), and
+the workflow currently triggers on the `staging` branch ONLY. Merging `staging`
+→ `main` today deploys via the LEGACY `main_touchpoint.yml` to the LEGACY prod
+(`touchpoint-bjanbef...`) — the new pipeline is not involved until these steps:
+
+1. **Provision the managed prod app** (re-run deploy WITHOUT `--no-prod`;
+   staging app untouched, both npm fixes now auto-injected):
+   ```bash
+   infra/scripts/deploy.sh deploy /Users/aliamin/Documents/Work/touchpoint \
+     --app-name touchpoint-rwh --env prod --staging-mode app \
+     --contract <local-env-overlay-with-PROD-db-url>
+   ```
+2. **Prod DB wiring**: prod app's `DATABASE_URL` app setting = prod DB
+   (`touchpoint-database`), and repo secret `DATABASE_URL_PRODUCTION` for CI
+   migrations (the migration step fails LOUDLY with instructions if missing —
+   by design).
+3. **Flip the workflow trigger**: in the repo's `deploy.yml`, change
+   `branches: [staging]` → `[main, staging]` (comment in the file marks the
+   line) and delete/retire the legacy `main_touchpoint.yml` — otherwise BOTH
+   pipelines deploy on every main merge.
+4. **Then** `staging` → `main` merges deploy the managed prod automatically.
+
+Without steps 1–3, a main merge either hits the old pipeline (steps skipped)
+or fails loudly ("app doesn't exist" / "DATABASE_URL_PRODUCTION not set") —
+never silently.
+
+---
+
 ## 1. The full sequence — what, when, why
 
 ### Phase A — platform plumbing (once, ever, for ALL apps)

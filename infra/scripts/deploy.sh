@@ -355,6 +355,28 @@ PY
     echo "pnpm detected: adding NPM_CONFIG_LEGACY_PEER_DEPS=true to app settings (Oryx uses npm server-side)"
   fi
 
+  # NODE_ENV=production makes the server-side npm skip devDependencies, which
+  # breaks Oryx builds (vite/esbuild live in devDeps). Until the single-build
+  # template ships, every node app gets NPM_CONFIG_PRODUCTION=false so the
+  # server build sees devDeps. Applies to prod AND staging apps (runbook 9b).
+  if [[ "$runtime" == "node" ]]; then
+    local with_node_fix="${tmp_vars_dir}/contract.node.tfvars.json"
+    if command -v jq >/dev/null 2>&1; then
+      jq '.app_settings = ((.app_settings // {}) + {"NPM_CONFIG_PRODUCTION": "false"})' "$tfvars_json" > "$with_node_fix"
+    else
+      python3 - "$tfvars_json" "$with_node_fix" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as fh:
+    data = json.load(fh)
+data.setdefault("app_settings", {})["NPM_CONFIG_PRODUCTION"] = "false"
+with open(sys.argv[2], "w", encoding="utf-8") as fh:
+    json.dump(data, fh)
+PY
+    fi
+    tfvars_json="$with_node_fix"
+    echo "node runtime: adding NPM_CONFIG_PRODUCTION=false (server build needs devDependencies)"
+  fi
+
   # 3. Platform wiring.
   local RG_NAME="" LOCATION="" PLAN_ID="" PLATFORM_STAGING_MODE=""
   resolve_platform
