@@ -112,6 +112,7 @@ MySQL server when convenient, then update the staging app setting +
 | 11 | **The script created an unrequested PRODUCTION app** alongside staging (pair-always default) — you asked for staging only | An idle prod app until destroyed the same day | Hard rule: create ONLY what was requested. `--no-prod` flag added (requires app mode); README §9 rule 11; re-running with it destroyed the stray prod app |
 | 12 | **Workflow kept `AZURE_WEBAPP_NAME: touchpoint`** after the app was renamed `touchpoint-rwh` at provision time | CI deploy failed: "Resource touchpoint-staging doesn't exist" | Rename + workflow update happen in the same breath (runbook 8b) |
 | 13 | **Oryx rebuilt the app server-side with npm** on a pnpm repo with loose peer deps (`valibot` conflict) — the template's double-build flaw | Zip deploy failed at Azure build despite CI build being green | `NPM_CONFIG_LEGACY_PEER_DEPS=true` on the app; deploy.sh now auto-adds it for pnpm repos (runbook 9a) |
+| 14 | **Server build skipped devDependencies** (`NODE_ENV=production` → npm omits devDeps → `vite: not found`) — third failure of the same double-build component | Another red deploy, one step further along | `NPM_CONFIG_PRODUCTION=false`. **Lesson accepted: stop patching the double-build — replace it with single-build (CI builds, server extracts + runs). Template v1.1.** |
 
 ---
 
