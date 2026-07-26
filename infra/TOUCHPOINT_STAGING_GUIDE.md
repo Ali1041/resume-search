@@ -110,6 +110,8 @@ MySQL server when convenient, then update the staging app setting +
 | 9 | Repo file is `claude.md` (lowercase) — my first commit missed it (case) | One extra commit | Stage exact paths; macOS FS is case-insensitive, git is not |
 | 10 | **My communication**: too much debugging noise, answers buried | Your patience | Guides now lead with the answer, details after |
 | 11 | **The script created an unrequested PRODUCTION app** alongside staging (pair-always default) — you asked for staging only | An idle prod app until destroyed the same day | Hard rule: create ONLY what was requested. `--no-prod` flag added (requires app mode); README §9 rule 11; re-running with it destroyed the stray prod app |
+| 12 | **Workflow kept `AZURE_WEBAPP_NAME: touchpoint`** after the app was renamed `touchpoint-rwh` at provision time | CI deploy failed: "Resource touchpoint-staging doesn't exist" | Rename + workflow update happen in the same breath (runbook 8b) |
+| 13 | **Oryx rebuilt the app server-side with npm** on a pnpm repo with loose peer deps (`valibot` conflict) — the template's double-build flaw | Zip deploy failed at Azure build despite CI build being green | `NPM_CONFIG_LEGACY_PEER_DEPS=true` on the app; deploy.sh now auto-adds it for pnpm repos (runbook 9a) |
 
 ---
 

@@ -334,6 +334,27 @@ cmd_deploy() {
   local tfvars_json="${tmp_vars_dir}/contract.tfvars.json"
   contract_write_tfvars_json "$contract_file" "$tfvars_json"
 
+  # pnpm repos tolerate loose peer deps via .npmrc; Azure's Oryx rebuild uses
+  # npm, which hard-fails the same tree (ERESOLVE). Detect pnpm and make the
+  # server-side npm behave the same way (runbook failure #10).
+  if [[ -f "${repo_dir}/pnpm-lock.yaml" ]]; then
+    local with_pnpm_fix="${tmp_vars_dir}/contract.pnpm.tfvars.json"
+    if command -v jq >/dev/null 2>&1; then
+      jq '.app_settings = ((.app_settings // {}) + {"NPM_CONFIG_LEGACY_PEER_DEPS": "true"})' "$tfvars_json" > "$with_pnpm_fix"
+    else
+      python3 - "$tfvars_json" "$with_pnpm_fix" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as fh:
+    data = json.load(fh)
+data.setdefault("app_settings", {})["NPM_CONFIG_LEGACY_PEER_DEPS"] = "true"
+with open(sys.argv[2], "w", encoding="utf-8") as fh:
+    json.dump(data, fh)
+PY
+    fi
+    tfvars_json="$with_pnpm_fix"
+    echo "pnpm detected: adding NPM_CONFIG_LEGACY_PEER_DEPS=true to app settings (Oryx uses npm server-side)"
+  fi
+
   # 3. Platform wiring.
   local RG_NAME="" LOCATION="" PLAN_ID="" PLATFORM_STAGING_MODE=""
   resolve_platform

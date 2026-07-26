@@ -169,3 +169,5 @@ az webapp log tail -g rg-<org>-platform -n <app>-staging   # if anything's off
 | 5c | re-deploy blocked by name check | fixed: `--existing` auto-detected |
 | 6a | secret accidentally committed | env-var overlay stays LOCAL, never in git |
 | 8a | CI fails at azure/login | org secrets missing or federated subject mismatch (repos created after 2026-07-15: verify `sub` format) |
+| 8b | Azure deploy shows wrong app name ("doesn't exist") | app was renamed at provision time (global uniqueness) but the workflow's `AZURE_WEBAPP_NAME` wasn't updated — rename and workflow must change in the same breath |
+| 9a | Oryx build fails `ERESOLVE` on a pnpm repo | the template double-builds: CI uses pnpm (loose peers via `.npmrc`), Azure's Oryx rebuild uses npm (strict). Fix: `NPM_CONFIG_LEGACY_PEER_DEPS=true` app setting — deploy.sh now adds it automatically when `pnpm-lock.yaml` is present |
