@@ -12,6 +12,9 @@ and the `--no-prod` choice. Everything else is copy-paste.
 
 ## Step 0 — Machine + access (~5 min, once)
 
+**Prerequisite: `infra/NEW_ORG_CHECKLIST.md` Part 0 (Foundations) is complete —
+accounts, access verified, decisions recorded. Do not start here without it.**
+
 ```bash
 terraform --version          # >= 1.5
 az login                     # browser auth; then: az account show --query name

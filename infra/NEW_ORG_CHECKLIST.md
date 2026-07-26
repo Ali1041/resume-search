@@ -8,6 +8,64 @@ backend config**, and **a short manual checklist** per org.
 **The rule that keeps this clean:** the engine (modules, scripts, templates,
 schema) is shared and never edited per org. Orgs differ only in configuration.
 
+**The process, end to end:** Part 0 Foundations (this page) → Part 1 Platform
+(per org) → Part 2 Per-app loop → Part 3 Daily flow (merge to deploy).
+
+---
+
+# Part 0 — Foundations: before ANY infra step (~30–60 min, mostly waiting on people)
+
+Do not touch Terraform until every box here is checked. Skipping foundations is
+how deployments turn into archaeology.
+
+## 0.1 Accounts that must exist
+
+| Account | Who creates/owns it | Notes |
+|---|---|---|
+| **GitHub organization** | Client (or us on their behalf) | Operator needs **Owner** role. All app repos live here. Example: `Recovery-With-Heart` |
+| **Azure subscription** | Client's billing account, or ours for managed hosting | Where every app runs. One subscription can host many orgs (namespaced by `project_name`) |
+| **MySQL/Postgres server** (only if apps have DBs) | Client or us | Existing server reused across apps; one DATABASE per app per environment |
+| **Slack channel** (optional) | Either | Deploy notifications via `SLACK_WEBHOOK_URL` |
+
+> **AWS note:** this automation is Azure-only (App Service, Key Vault, Entra
+> OIDC). AWS would be a separate platform effort — not a config change.
+
+## 0.2 Access the operator must hold (verify BEFORE starting)
+
+| Access | Level | Verify with |
+|---|---|---|
+| Azure subscription | **Contributor** (create RGs, plans, web apps, vaults, role assignments) | `az account show` → correct subscription |
+| Microsoft Entra ID | **Application Administrator** (or Cloud App Admin) — needed to create the OIDC app registration | `az ad app create --display-name probe-xxx --query appId -o tsv` then delete it, or just try step 2 and watch for 403 |
+| GitHub org | **Owner** (org secrets, repo creation, branch rules) | create a test repo, delete it |
+| DB server | **Admin login** (create databases, firewall rules) | `az mysql flexible-server db list -g <rg> -n <server>` |
+| Operator's own AAD object id | — | `az ad signed-in-user show --query id -o tsv` → goes to `OPERATOR_OBJECT_ID` |
+
+## 0.3 Access the CLIENT needs (and does NOT need)
+
+| Who | Gets | Does NOT get |
+|---|---|---|
+| Client devs (e.g. Josh) | GitHub repo write, PR workflow, the app-repo `CLAUDE.md` rules | Azure portal access, Terraform, state storage, Key Vault data-plane |
+| Client approver (e.g. Ben) | The scenario A/B cost decision, URLs | anything else |
+| CI (GitHub Actions) | OIDC federated token → **Website Contributor per app only** | stored secrets, RG-level roles, KV data-plane |
+
+## 0.4 Decisions to record BEFORE starting (write them in the org's section of your notes)
+
+1. `project_name` (2–12 chars, becomes `rg-<name>-platform` everywhere)
+2. **Region** — usually a data-residency answer (GHR → canadaeast)
+3. **Scenario A or B** (slots on S1 ~$73/mo vs separate staging apps on B1 ~$13/mo) — billing decision, needs the approver
+4. **Secrets posture per environment** — env-var mode (staging OK) vs vault mode (prod required)
+5. Slack notifications on/off
+
+## 0.5 The intake checklist (copy into the org's ticket/doc)
+
+```
+Org:                       GitHub org name:              Azure sub ID:
+Tenant ID:                 project_name:                 Region:
+Scenario (A/B):            SKU:                          Operator (name + AAD object id):
+DB server (if any):        DB admin who:                 Slack webhook (opt):
+Approver (billing):        Date OIDC app reg created:    SP object id:
+```
+
 ---
 
 ## What you need from the organization (before touching anything)
