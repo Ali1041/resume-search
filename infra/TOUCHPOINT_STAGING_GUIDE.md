@@ -52,33 +52,21 @@ MySQL server when convenient, then update the staging app setting +
 
 ---
 
-## Prod cutover checklist (staging → main, when ready)
+## Permanent split (decision 2026-07-26, locked)
 
-The staging environment was deliberately built staging-only (`--no-prod`), and
-the workflow currently triggers on the `staging` branch ONLY. Merging `staging`
-→ `main` today deploys via the LEGACY `main_touchpoint.yml` to the LEGACY prod
-(`touchpoint-bjanbef...`) — the new pipeline is not involved until these steps:
+For THIS app, the two pipelines are permanent:
 
-1. **Provision the managed prod app** (re-run deploy WITHOUT `--no-prod`;
-   staging app untouched, both npm fixes now auto-injected):
-   ```bash
-   infra/scripts/deploy.sh deploy /Users/aliamin/Documents/Work/touchpoint \
-     --app-name touchpoint-rwh --env prod --staging-mode app \
-     --contract <local-env-overlay-with-PROD-db-url>
-   ```
-2. **Prod DB wiring**: prod app's `DATABASE_URL` app setting = prod DB
-   (`touchpoint-database`), and repo secret `DATABASE_URL_PRODUCTION` for CI
-   migrations (the migration step fails LOUDLY with instructions if missing —
-   by design).
-3. **Flip the workflow trigger**: in the repo's `deploy.yml`, change
-   `branches: [staging]` → `[main, staging]` (comment in the file marks the
-   line) and delete/retire the legacy `main_touchpoint.yml` — otherwise BOTH
-   pipelines deploy on every main merge.
-4. **Then** `staging` → `main` merges deploy the managed prod automatically.
+| Branch | Pipeline | Deploys to |
+|---|---|---|
+| `main` | **Legacy** `main_touchpoint.yml` (Azure-generated) | Legacy prod `touchpoint-bjanbefcbrfpd8cn` (real production) |
+| `staging` | **New** `deploy.yml` (this automation) | `touchpoint-rwh-staging` (managed staging playground) |
 
-Without steps 1–3, a main merge either hits the old pipeline (steps skipped)
-or fails loudly ("app doesn't exist" / "DATABASE_URL_PRODUCTION not set") —
-never silently.
+- There is NO cutover. The managed prod app is never provisioned;
+  `DATABASE_URL_PRODUCTION` is never needed for the new pipeline.
+- The new workflow's trigger stays `branches: [staging]` permanently — do not
+  add `main` unless this decision is explicitly revisited.
+- Merging `staging` → `main` promotes code to legacy prod via the legacy
+  pipeline, as before. The new pipeline only ever sees the staging branch.
 
 ---
 
