@@ -483,6 +483,14 @@ Everything on this page has bitten someone at least once.
 7. **App names are globally unique across all of Azure.** If the name is taken,
    preflight's `--check-names` catches it (needs `az`); otherwise the apply
    fails late with a naming error — pick a new name, don't force it.
+   **If you rename at provision time, update the repo workflow's
+   `AZURE_WEBAPP_NAME` in the same breath** or CI will deploy to a nonexistent
+   app (runbook failure 8b).
+8. **pnpm repos: Azure rebuilds with npm, not pnpm.** CI builds with pnpm
+   (loose peer deps via `.npmrc`), then Oryx rebuilds on the server with npm
+   (strict) → `ERESOLVE` on loose peer trees. Fix: app setting
+   `NPM_CONFIG_LEGACY_PEER_DEPS=true` — deploy.sh adds it automatically when it
+   sees `pnpm-lock.yaml`; set it yourself for manual deploys (runbook 9a).
 
 **When running `deploy.sh destroy`:**
 8. Typed confirmation required; it physically cannot touch the shared platform
